@@ -80,8 +80,9 @@ def _conducting_episodes(conn, episode_ids: set[int], scope: str) -> dict[int, d
         return {}
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, scope, trace, register, salience, strength, occurred_at "
-            "FROM episodes WHERE id = ANY(%s) AND NOT quarantined AND strength >= 0.1",
+            "SELECT id, scope, trace, register, register_emb, salience, strength, "
+            "occurred_at FROM episodes "
+            "WHERE id = ANY(%s) AND NOT quarantined AND strength >= 0.1",
             (list(episode_ids),),
         )
         return {r["id"]: dict(r) for r in cur.fetchall()}
@@ -89,9 +90,15 @@ def _conducting_episodes(conn, episode_ids: set[int], scope: str) -> dict[int, d
 
 def spread(conn, scope: str, query: str, fact_hits: list[dict],
            assoc_budget_tokens: int | None = None,
+           mood_emb=None,
            debug: bool = False) -> list[dict] | tuple[list[dict], dict]:
     """Run activation spread; return budget-packed associations
-    (and the per-hop trace when debug=True — the Observatory's debugger)."""
+    (and the per-hop trace when debug=True — the Observatory's debugger).
+
+    mood_emb (Sprint 5, cheap flavor): a register-space embedding of the
+    caller's current mood. Episode ranking blends register-embedding cosine —
+    sad seeds preferentially surface sad episodes. State-dependent recall,
+    the genuinely human retrieval property."""
     budget = assoc_budget_tokens or config.ASSOC_BUDGET_TOKENS
     activation: dict = {}
     activation.update(_seed_from_query(conn, query))
@@ -142,8 +149,18 @@ def spread(conn, scope: str, query: str, fact_hits: list[dict],
         meta = episode_meta.get(node_id)
         if meta is None or meta["scope"] != scope:
             continue
-        candidates.append({**meta, "activation": act,
-                           "rank": act * meta["salience"]})
+        rank = act * meta["salience"]
+        mood_sim = None
+        if mood_emb is not None and meta.get("register_emb") is not None:
+            # both vectors normalized at write → dot product IS cosine
+            import numpy as np
+            reg = meta["register_emb"]
+            reg = reg.to_list() if hasattr(reg, "to_list") else reg
+            mood_sim = float(np.dot(np.asarray(reg, dtype=float),
+                                    np.asarray(mood_emb, dtype=float)))
+            rank *= (1.0 + config.MOOD_WEIGHT * mood_sim)
+        candidates.append({**meta, "activation": act, "rank": rank,
+                           "mood_similarity": mood_sim})
     candidates.sort(key=lambda c: c["rank"], reverse=True)
 
     packed, spent = [], 0
@@ -152,9 +169,12 @@ def spread(conn, scope: str, query: str, fact_hits: list[dict],
         if spent + cost > budget:
             continue
         spent += cost
-        packed.append({"episode_id": c["id"], "trace": c["trace"],
-                       "register": c["register"], "occurred_at": c["occurred_at"],
-                       "activation": round(float(c["activation"]), 4)})
+        item = {"episode_id": c["id"], "trace": c["trace"],
+                "register": c["register"], "occurred_at": c["occurred_at"],
+                "activation": round(float(c["activation"]), 4)}
+        if c.get("mood_similarity") is not None:
+            item["mood_similarity"] = round(c["mood_similarity"], 4)
+        packed.append(item)
 
     # Recall strengthens: memory learns from being used
     if packed:

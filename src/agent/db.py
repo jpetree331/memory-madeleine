@@ -100,6 +100,16 @@ ALTER TABLE episodes ADD COLUMN IF NOT EXISTS proj_y REAL;
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS reg_proj_x REAL;  -- register-emb projection
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS reg_proj_y REAL;
 
+CREATE TABLE IF NOT EXISTS recall_log (          -- co-retrieval evidence (Sprint 4)
+  id SERIAL PRIMARY KEY,
+  scope TEXT NOT NULL,
+  query TEXT,                                     -- for reconsolidation context
+  fact_ids INT[] NOT NULL DEFAULT '{}',
+  episode_ids INT[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_recall_log_time ON recall_log (created_at);
+
 CREATE TABLE IF NOT EXISTS gate_log (            -- live feed source; also great debugging
   id SERIAL PRIMARY KEY,
   scope TEXT NOT NULL,

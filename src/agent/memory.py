@@ -192,23 +192,48 @@ def recall(scope: str, query: str,
 def recall_full(scope: str, query: str,
                 fact_budget_tokens: int | None = None,
                 assoc_budget_tokens: int | None = None,
+                mood_text: str | None = None,
                 debug: bool = False) -> dict:
     """Two-phase retrieval: facts (guaranteed budget) then spreading
     activation (smaller, optional budget). Associations are labeled and
     separate — never mixed into facts. Phase 2 failure degrades to
     facts-only; phase 1 failure degrades to empty. The conversation
-    always continues."""
+    always continues.
+
+    mood_text (cheap flavor): the caller's one-line description of the
+    current register — episode ranking blends register-space similarity,
+    so the mood of now colors what the past offers up."""
     facts = recall(scope, query, fact_budget_tokens=fact_budget_tokens)
     associations: list[dict] = []
     debug_info = None
+    mood_emb = None
+    if mood_text and mood_text.strip():
+        try:
+            mood_emb = embeddings.embed([mood_text.strip()])[0]
+        except Exception as e:
+            logger.warning("mood embedding failed (recall proceeds moodless): %s", e)
     try:
         with _conn() as conn:
             result = spread.spread(conn, scope, query, facts,
                                    assoc_budget_tokens=assoc_budget_tokens,
+                                   mood_emb=mood_emb,
                                    debug=debug)
         associations, debug_info = result if debug else (result, None)
     except Exception as e:
         logger.error("spread failed (facts still served): %s", e)
+    # Co-retrieval evidence for the nightly job (fire-and-forget; a failed
+    # log must never cost a recall)
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO recall_log (scope, query, fact_ids, episode_ids) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (scope, query[:500], [f["id"] for f in facts],
+                     [a["episode_id"] for a in associations]),
+                )
+    except Exception as e:
+        logger.warning("recall_log write failed (recall unaffected): %s", e)
     out = {"facts": facts, "associations": associations,
            "context_block": spread.render_context(facts, associations)}
     if debug:

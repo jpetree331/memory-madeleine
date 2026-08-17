@@ -43,6 +43,17 @@ DB_READY = False
 def _startup():
     global DB_READY
     DB_READY = db.setup_schema()
+    # Nightly consolidation — the memory's sleep cycle
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from . import consolidate
+        sched = BackgroundScheduler()
+        sched.add_job(consolidate.run, "cron", hour=config.NIGHTLY_HOUR,
+                      id="nightly_consolidation")
+        sched.start()
+        logger.info("consolidation scheduled nightly at %02d:00", config.NIGHTLY_HOUR)
+    except Exception as e:
+        logger.error("scheduler failed to start (service continues): %s", e)
     logger.info("Madeleine up on %d — db_ready=%s", config.PORT, DB_READY)
 
 
@@ -65,6 +76,7 @@ class RecallReq(BaseModel):
     query: str
     fact_budget_tokens: int | None = None
     assoc_budget_tokens: int | None = None
+    mood_text: str | None = None       # cheap flavor: current register, colors recall
     debug: bool = False
 
 
@@ -97,7 +109,168 @@ def recall(req: RecallReq):
     return memory.recall_full(req.scope, req.query.strip(),
                               fact_budget_tokens=req.fact_budget_tokens,
                               assoc_budget_tokens=req.assoc_budget_tokens,
+                              mood_text=req.mood_text,
                               debug=req.debug)
+
+
+# ── Observatory endpoints (addendum) — read-only instruments ──────────────────
+
+@app.get("/api/stats")
+def stats(scope: str | None = None):
+    """Counts + last consolidation summary — the Overview cards."""
+    import glob
+    import json as _json
+    where = "WHERE scope=%s" if scope else ""
+    params = (scope,) if scope else ()
+    out = {}
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT status, COUNT(*) AS c FROM facts {where} GROUP BY status",
+                            params)
+                out["facts"] = {r["status"]: r["c"] for r in cur.fetchall()}
+                cur.execute(
+                    f"SELECT COUNT(*) FILTER (WHERE strength >= 1.0) AS strong, "
+                    f"COUNT(*) FILTER (WHERE strength >= 0.5 AND strength < 1.0) AS mid, "
+                    f"COUNT(*) FILTER (WHERE strength < 0.5) AS faint, "
+                    f"COUNT(*) FILTER (WHERE quarantined) AS quarantined, "
+                    f"COUNT(*) FILTER (WHERE pinned) AS pinned "
+                    f"FROM episodes {where}", params)
+                out["episodes"] = dict(cur.fetchone())
+                cur.execute("SELECT COUNT(*) AS c FROM edges")
+                out["edges"] = cur.fetchone()["c"]
+                cur.execute("SELECT COUNT(*) AS c FROM entities")
+                out["entities"] = cur.fetchone()["c"]
+                cur.execute(f"SELECT COUNT(*) AS c FROM raw_exchanges "
+                            f"{where.replace('WHERE', 'WHERE') if where else ''} ", params)
+                out["raw_exchanges"] = cur.fetchone()["c"]
+    except Exception as e:
+        logger.error("stats failed: %s", e)
+        return {"error": "db unavailable"}
+    runs = sorted(glob.glob(str(config.REPO_ROOT / "data" / "logs" / "consolidate-*.json")))
+    if runs:
+        try:
+            out["last_consolidation"] = _json.loads(Path(runs[-1]).read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return out
+
+
+@app.get("/api/episodes")
+def episodes_list(scope: str | None = None, q: str | None = None,
+                  quarantined: bool | None = None, pinned: bool | None = None,
+                  sort: str = "occurred_at", page: int = 1, page_size: int = 50):
+    """Paged episode browser. Register text search via q."""
+    sort_col = sort if sort in ("occurred_at", "salience", "strength", "recall_count",
+                                "created_at") else "created_at"
+    clauses, params = [], []
+    if scope:
+        clauses.append("scope=%s"); params.append(scope)
+    if q:
+        clauses.append("(register ILIKE %s OR trace ILIKE %s)")
+        params += [f"%{q}%", f"%{q}%"]
+    if quarantined is not None:
+        clauses.append("quarantined=%s"); params.append(quarantined)
+    if pinned is not None:
+        clauses.append("pinned=%s"); params.append(pinned)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS c FROM episodes {where}", params)
+            total = cur.fetchone()["c"]
+            cur.execute(
+                f"SELECT id, scope, trace, register, salience, strength, quarantined, "
+                f"pinned, recall_count, occurred_at, created_at, last_recalled_at "
+                f"FROM episodes {where} ORDER BY {sort_col} DESC NULLS LAST "
+                f"LIMIT %s OFFSET %s", params + [page_size, (page - 1) * page_size])
+            rows = [dict(r) for r in cur.fetchall()]
+    return {"total": total, "episodes": rows}
+
+
+@app.get("/api/episodes/{episode_id}")
+def episode_dossier(episode_id: int):
+    """Full dossier: trace, linked entities + facts, revision history."""
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM episodes WHERE id=%s", (episode_id,))
+            ep = cur.fetchone()
+            if not ep:
+                raise HTTPException(404, "Episode not found")
+            ep = {k: v for k, v in dict(ep).items()
+                  if k not in ("register_emb", "flavor")}
+            cur.execute(
+                "SELECT en.id, en.key, en.name, en.kind, e.weight FROM edges e "
+                "JOIN entities en ON en.id = e.dst_id "
+                "WHERE e.src_kind='episode' AND e.src_id=%s AND e.dst_kind='entity'",
+                (episode_id,))
+            ep["entities"] = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT id, content, kind, status FROM facts "
+                        "WHERE source_episode_id=%s", (episode_id,))
+            ep["facts"] = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT id, trace, strength, rewritten_at, reason "
+                        "FROM episode_revisions WHERE episode_id=%s "
+                        "ORDER BY rewritten_at DESC", (episode_id,))
+            ep["revisions"] = [dict(r) for r in cur.fetchall()]
+    return ep
+
+
+@app.post("/api/episodes/{episode_id}/pin")
+def episode_pin(episode_id: int):
+    """Toggle pin (exempt from decay). One of the two mutating controls —
+    memory is edited by living, not by clicking."""
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE episodes SET pinned = NOT pinned WHERE id=%s "
+                        "RETURNING pinned", (episode_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Episode not found")
+    return {"pinned": row["pinned"]}
+
+
+@app.get("/api/atlas")
+def atlas(scope: str | None = None, space: str = "register"):
+    """Projected memory landscape. Register space until Phase-5 flavor exists."""
+    col = "reg_proj_x, reg_proj_y" if space == "register" else "proj_x, proj_y"
+    where = "AND scope=%s" if scope else ""
+    params = (scope,) if scope else ()
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT id, {col.split(',')[0].strip()} AS x, "
+                f"{col.split(',')[1].strip()} AS y, register, salience, strength, "
+                f"occurred_at FROM episodes "
+                f"WHERE {col.split(',')[0].strip()} IS NOT NULL AND NOT quarantined "
+                f"{where}", params)
+            return {"points": [dict(r) for r in cur.fetchall()], "space": space}
+
+
+@app.get("/api/gate/feed")
+def gate_feed(after_id: int = 0, limit: int = 50):
+    """Live feed (polled). Quarantined rows show decision, never content."""
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT g.id, g.scope, g.salience, g.register, g.decision, g.created_at, "
+                "CASE WHEN g.decision != 'quarantined' THEN LEFT(r.content, 90) "
+                "ELSE NULL END AS preview "
+                "FROM gate_log g LEFT JOIN raw_exchanges r ON r.id = g.exchange_id "
+                "WHERE g.id > %s ORDER BY g.id DESC LIMIT %s", (after_id, limit))
+            return {"rows": [dict(r) for r in cur.fetchall()]}
+
+
+@app.get("/api/consolidation/runs")
+def consolidation_runs():
+    import glob
+    import json as _json
+    out = []
+    for p in sorted(glob.glob(str(config.REPO_ROOT / "data" / "logs" / "consolidate-*.json")),
+                    reverse=True)[:30]:
+        try:
+            out.append(_json.loads(Path(p).read_text(encoding="utf-8")))
+        except Exception:
+            continue
+    return {"runs": out}
 
 
 # StaticFiles mounted LAST so API routes win (dashboard arrives Sprint 7)
