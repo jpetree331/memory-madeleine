@@ -16,7 +16,7 @@ from datetime import datetime
 
 from pgvector.psycopg import register_vector
 
-from . import config, db, embeddings, extractor
+from . import config, db, embeddings, episodes, extractor, gate
 
 logger = logging.getLogger("madeleine.memory")
 
@@ -50,8 +50,13 @@ def retain(scope: str, speaker: str, content: str,
 
 
 def _extract_worker(exchange_id: int) -> None:
-    """Extraction pass for one raw exchange. Failure leaves the row queued
-    (extracted_at IS NULL) — visible, retryable, never fatal."""
+    """Full write pipeline for one raw exchange:
+
+      gate → (quarantine short-circuit) → episode when salient → facts →
+      entities + co-occurrence edges → gate_log
+
+    Failure at any LLM stage leaves the row queued (extracted_at IS NULL) —
+    visible, retryable, never fatal. Raw text is already durable."""
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
@@ -60,6 +65,45 @@ def _extract_worker(exchange_id: int) -> None:
         if not row:
             return
         exchange_text = f"{row['speaker']}: {row['content']}"
+
+        # 1. The gate — salience AND sanitization, one judgment
+        g = gate.assess(exchange_text)
+
+        # 2. Injection risk: quarantined episode, NO facts, raw kept, loud log
+        if g["injection_risk"]:
+            trace = episodes.write_trace(exchange_text) or \
+                "(quarantined before trace generation)"
+            with _conn() as conn:
+                ep_id = episodes.create(
+                    conn, scope=row["scope"], trace=trace, register=g["register"],
+                    salience=g["salience"], quarantined=True,
+                    exchange_id=exchange_id, occurred_at=row["occurred_at"])
+                gate.log_decision(conn, row["scope"], "quarantined", g,
+                                  exchange_id, ep_id)
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE raw_exchanges SET extracted_at=NOW() WHERE id=%s",
+                                (exchange_id,))
+            logger.warning("QUARANTINED exchange %d (episode %d): %s",
+                           exchange_id, ep_id, "; ".join(g["reasons"]))
+            return
+
+        # 3. Episode, when the exchange earns one
+        episode_id = None
+        episodic = g["salience"] >= config.SALIENCE_THRESHOLD
+        if episodic:
+            trace = episodes.write_trace(exchange_text)
+            if trace:
+                with _conn() as conn:
+                    episode_id = episodes.create(
+                        conn, scope=row["scope"], trace=trace.strip(),
+                        register=g["register"], salience=g["salience"],
+                        quarantined=False, exchange_id=exchange_id,
+                        occurred_at=row["occurred_at"])
+            else:
+                logger.warning("trace generation failed for exchange %d — "
+                               "facts proceed, episode skipped", exchange_id)
+
+        # 4. Facts (+ entities) — Sprint 1 path, now with episode provenance
         near = _nearest_facts(row["scope"], row["content"], _NEAR_FACTS_FOR_SUPERSEDE)
         result = extractor.extract_facts(exchange_text, near)
         if result is None:
@@ -74,9 +118,9 @@ def _extract_worker(exchange_id: int) -> None:
                 new_ids = []
                 for text, vec in zip(facts, vectors):
                     cur.execute(
-                        "INSERT INTO facts (scope, content, embedding, source_ref) "
-                        "VALUES (%s, %s, %s, %s) RETURNING id",
-                        (row["scope"], text, vec, f"raw:{exchange_id}"),
+                        "INSERT INTO facts (scope, content, embedding, source_ref, "
+                        "source_episode_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                        (row["scope"], text, vec, f"raw:{exchange_id}", episode_id),
                     )
                     new_ids.append(cur.fetchone()["id"])
                 # Supersede = status flip + pointer; content is never touched
@@ -88,8 +132,17 @@ def _extract_worker(exchange_id: int) -> None:
                     )
                 cur.execute("UPDATE raw_exchanges SET extracted_at=NOW() WHERE id=%s",
                             (exchange_id,))
-        logger.info("exchange %d: %d facts, %d superseded",
-                    exchange_id, len(facts), len(valid_supersede))
+            # 5. The snowflake grows: entities + co-occurrence edges
+            linked = 0
+            if episode_id is not None and result.get("entities"):
+                linked = episodes.link_entities(conn, episode_id,
+                                                result["entities"], g["salience"])
+            gate.log_decision(conn, row["scope"],
+                              "episode" if episode_id else "facts_only",
+                              g, exchange_id, episode_id)
+        logger.info("exchange %d: salience=%.2f episode=%s facts=%d entities=%d superseded=%d",
+                    exchange_id, g["salience"], episode_id, len(facts),
+                    linked, len(valid_supersede))
     except Exception as e:
         logger.error("extract worker failed for exchange %d: %s", exchange_id, e)
 

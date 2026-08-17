@@ -41,8 +41,14 @@ Rules, learned from forensic audits of prior memory systems — they are not sty
 You are also given up to 5 existing memory facts semantically near this exchange.
 If the new exchange contradicts or supersedes any of them, list those fact ids.
 
+Also list the entities this exchange touches — people, projects, places, and
+load-bearing concepts (a song, a car, a recurring idea). Key is a canonical
+lowercase slug; reuse obvious slugs ('jess', not 'jess-the-user'). Entities
+must be explicitly present; never infer or invent them.
+
 Respond with STRICT JSON only, no markdown fences:
-{"facts": ["...", "..."], "superseded_ids": [123]}"""
+{"facts": ["...", "..."], "superseded_ids": [123],
+ "entities": [{"key": "granddad", "name": "Granddad", "kind": "person"}]}"""
 
 
 def _chat(system: str, user: str, max_tokens: int = 1500) -> str | None:
@@ -93,7 +99,8 @@ def extract_facts(exchange_text: str, near_facts: list[dict]) -> dict | None:
         out = json.loads(cleaned)
         facts = [str(f).strip() for f in (out.get("facts") or []) if str(f).strip()]
         sup = [int(i) for i in (out.get("superseded_ids") or [])]
-        return {"facts": facts[:6], "superseded_ids": sup}
+        ents = [e for e in (out.get("entities") or []) if isinstance(e, dict)][:8]
+        return {"facts": facts[:6], "superseded_ids": sup, "entities": ents}
     except (ValueError, TypeError) as e:
         logger.warning("extractor returned unparseable JSON: %s :: %r", e, raw[:200])
         return None
