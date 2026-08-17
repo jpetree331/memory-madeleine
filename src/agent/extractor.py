@@ -44,7 +44,10 @@ Rules, learned from forensic audits of prior memory systems — they are not sty
 - ROLE PRECISION: never merge distinct actors' contributions into joint action.
   "A built it and B audited it" must not become "A and B worked together" —
   symmetry that nobody wore is a falsehood with good manners.
-- If you catch yourself writing "the user", stop and write the name instead.
+- If you catch yourself writing "the user", "the agent", "the assistant", or
+  "the AI" as a person-referent, stop and write the name instead. Role words
+  are schema, not people — a fact that says "the agent did X" has lost track
+  of who did X (the Grain audit-#4 catch).
 - Only extract what is actually in the exchange. No world knowledge, no elaboration.
 - 0 to 6 facts per exchange. Routine chit-chat may yield zero. Quality over count.
 
