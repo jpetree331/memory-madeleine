@@ -117,6 +117,20 @@ def _extract_worker(exchange_id: int) -> None:
             with conn.cursor() as cur:
                 new_ids = []
                 for text, vec in zip(facts, vectors):
+                    # Dedupe at insert (Grain audit #3): a near-identical active
+                    # fact already in scope means this one adds noise, not truth
+                    if config.DEDUPE_THRESHOLD > 0:
+                        cur.execute(
+                            "SELECT id, 1 - (embedding <=> %s::vector) AS sim "
+                            "FROM facts WHERE scope=%s AND status='active' "
+                            "AND embedding IS NOT NULL "
+                            "ORDER BY embedding <=> %s::vector LIMIT 1",
+                            (vec, row["scope"], vec))
+                        near = cur.fetchone()
+                        if near and float(near["sim"]) >= config.DEDUPE_THRESHOLD:
+                            logger.info("dedupe: skipped near-twin of fact %d "
+                                        "(sim %.3f)", near["id"], near["sim"])
+                            continue
                     cur.execute(
                         "INSERT INTO facts (scope, content, embedding, source_ref, "
                         "source_episode_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",

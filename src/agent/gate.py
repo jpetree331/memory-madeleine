@@ -47,7 +47,9 @@ def assess(exchange_text: str) -> dict:
     default: mid-salience=0 (facts only, no episode) and injection_risk=False
     — an unreadable gate must not invent quarantines, and episodes can be
     regated later from raw text if it ever matters."""
-    raw = extractor._chat(GATE_SYSTEM, exchange_text, max_tokens=400)
+    from . import config
+    raw = extractor._chat(GATE_SYSTEM, exchange_text, max_tokens=400,
+                          model=config.GATE_MODEL)
     if raw is None:
         return {"salience": 0.0, "register": None, "injection_risk": False,
                 "reasons": ["gate unavailable — facts-only default"]}

@@ -37,6 +37,13 @@ MOOD_WEIGHT = float(os.environ.get("MOOD_WEIGHT", "0.5"))
 # Same brain either way — claude-haiku-4-5. DECISIONS.md entry 2026-08-17.
 EXTRACTOR_PROVIDER = os.environ.get("EXTRACTOR_PROVIDER", "openrouter").strip()
 EXTRACTOR_MODEL = os.environ.get("EXTRACTOR_MODEL", "claude-haiku-4-5").strip()
+# Per-role brains (Grain audit #3): the gate is high-volume triage — haiku.
+# Extraction and traces carry attribution and voice — worth a stronger model.
+GATE_MODEL = os.environ.get("GATE_MODEL", "claude-haiku-4-5").strip()
+EXTRACT_MODEL = os.environ.get("EXTRACT_MODEL", "claude-sonnet-4.5").strip()
+TRACE_MODEL = os.environ.get("TRACE_MODEL", "claude-sonnet-4.5").strip()
+# Near-duplicate facts are skipped at insert above this cosine (0 disables)
+DEDUPE_THRESHOLD = float(os.environ.get("DEDUPE_THRESHOLD", "0.97"))
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3").strip()

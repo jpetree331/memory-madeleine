@@ -26,6 +26,7 @@ logger = logging.getLogger("madeleine.extractor")
 _OPENROUTER_MODEL_MAP = {
     # OpenRouter slugs its models org-prefixed
     "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+    "claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
 }
 
 EXTRACT_SYSTEM = """You extract atomic facts from conversation exchanges for a long-term memory system.
@@ -37,6 +38,13 @@ Rules, learned from forensic audits of prior memory systems — they are not sty
   must never be filed under another.
 - Abstract nouns are not people. Never infer a person who is not explicitly present.
 - Intentions, plans, and drafts are not events. "X plans to Y" must stay a plan, not become "X did Y".
+- VERB FIDELITY: preserve speech-act verbs exactly as the record has them.
+  "Mentioned" is not "named". "Asked" is not "said". "Suggested" is not "decided".
+  Never upgrade a verb to a more causal or authoritative one.
+- ROLE PRECISION: never merge distinct actors' contributions into joint action.
+  "A built it and B audited it" must not become "A and B worked together" —
+  symmetry that nobody wore is a falsehood with good manners.
+- If you catch yourself writing "the user", stop and write the name instead.
 - Only extract what is actually in the exchange. No world knowledge, no elaboration.
 - 0 to 6 facts per exchange. Routine chit-chat may yield zero. Quality over count.
 
@@ -80,8 +88,11 @@ def _chat_claude_code(system: str, user: str) -> str | None:
         return None
 
 
-def _chat(system: str, user: str, max_tokens: int = 1500) -> str | None:
-    """One completion through the configured door. None on any failure."""
+def _chat(system: str, user: str, max_tokens: int = 1500,
+          model: str | None = None) -> str | None:
+    """One completion through the configured door. None on any failure.
+    model overrides the default per role (gate/extract/trace brains differ)."""
+    use_model = model or config.EXTRACTOR_MODEL
     try:
         if config.EXTRACTOR_PROVIDER == "claude-code":
             return _chat_claude_code(system, user)
@@ -89,7 +100,7 @@ def _chat(system: str, user: str, max_tokens: int = 1500) -> str | None:
             import anthropic
             client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
             msg = client.messages.create(
-                model=config.EXTRACTOR_MODEL, max_tokens=max_tokens,
+                model=use_model, max_tokens=max_tokens,
                 system=system, messages=[{"role": "user", "content": user}],
             )
             return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
@@ -97,7 +108,7 @@ def _chat(system: str, user: str, max_tokens: int = 1500) -> str | None:
         if not key:
             logger.warning("no extractor key available (provider=%s)", config.EXTRACTOR_PROVIDER)
             return None
-        model = _OPENROUTER_MODEL_MAP.get(config.EXTRACTOR_MODEL, config.EXTRACTOR_MODEL)
+        model = _OPENROUTER_MODEL_MAP.get(use_model, use_model)
         with httpx.Client(timeout=120.0) as c:
             r = c.post("https://openrouter.ai/api/v1/chat/completions",
                        headers={"Authorization": f"Bearer {key}",
@@ -118,7 +129,7 @@ def extract_facts(exchange_text: str, near_facts: list[dict]) -> dict | None:
     near_block = "\n".join(f"[id {f['id']}] {f['content']}" for f in near_facts) or "(none)"
     user = (f"## Exchange\n{exchange_text}\n\n"
             f"## Existing nearby facts\n{near_block}")
-    raw = _chat(EXTRACT_SYSTEM, user)
+    raw = _chat(EXTRACT_SYSTEM, user, model=config.EXTRACT_MODEL)
     if raw is None:
         return None
     try:
