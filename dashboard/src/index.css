@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Observatory night-sky ground */
+body { background: #070b14; color: #dbe4f0; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #1d2839; border-radius: 4px; }
