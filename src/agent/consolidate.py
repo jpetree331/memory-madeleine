@@ -253,6 +253,42 @@ def run(now: datetime | None = None) -> dict:
         summary["errors"].append(f"reconsolidation: {e}")
         logger.error("reconsolidation pass failed: %s", e)
 
+    # ── 4b. Deep flavor capture (Sprint 5.1) — nightly, VRAM-guarded ─────────
+    try:
+        from . import reader
+        if reader.gpu_ready():
+            with _conn() as conn:
+                captured = reader.capture_batch(conn)
+                summary["flavor_captured"] = captured
+                if captured:
+                    # No HNSW on flavor (pgvector hnsw caps at 2000 dims;
+                    # flavor is 4096 — brute-force cosine suffices at fleet
+                    # scale, DECISIONS S5.1-2). Flavor projections for the atlas:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT id, flavor FROM episodes "
+                                    "WHERE flavor IS NOT NULL")
+                        rows = cur.fetchall()
+                        if len(rows) >= 3:
+                            mat = np.array([_as_array(r["flavor"]) for r in rows])
+                            centered = mat - mat.mean(axis=0)
+                            _, _, vt = np.linalg.svd(centered, full_matrices=False)
+                            proj = centered @ vt[:2].T
+                            for r, (x, y) in zip(rows, proj):
+                                cur.execute("UPDATE episodes SET proj_x=%s, proj_y=%s "
+                                            "WHERE id=%s",
+                                            (float(x), float(y), r["id"]))
+            reader.unload()
+        else:
+            summary["flavor_captured"] = "skipped: GPU busy"
+    except Exception as e:
+        summary["errors"].append(f"flavor: {e}")
+        logger.error("flavor pass failed: %s", e)
+        try:
+            from . import reader as _r
+            _r.unload()
+        except Exception:
+            pass
+
     # ── 5. Projection (Observatory): PCA of register embeddings ──────────────
     try:
         with _conn() as conn:

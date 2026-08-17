@@ -326,6 +326,68 @@ function Playground({ scope: navScope }) {
   )
 }
 
+function Atlas({ scope }) {
+  const [space, setSpace] = useState('register')
+  const [points, setPoints] = useState([])
+  const [hover, setHover] = useState(null)
+  const [open, setOpen] = useState(null)
+  useEffect(() => {
+    const p = new URLSearchParams({ space })
+    if (scope) p.set('scope', scope)
+    fetch(`${API}/atlas?${p}`).then(r => r.json())
+      .then(d => setPoints(d.points || [])).catch(() => setPoints([]))
+  }, [space, scope])
+  const xs = points.map(p => p.x), ys = points.map(p => p.y)
+  const pad = 0.08
+  const x0 = Math.min(...xs), x1 = Math.max(...xs)
+  const y0 = Math.min(...ys), y1 = Math.max(...ys)
+  const sx = x => 60 + ((x - x0) / ((x1 - x0) || 1)) * 680 * (1 - pad)
+  const sy = y => 40 + ((y - y0) / ((y1 - y0) || 1)) * 440 * (1 - pad)
+  return (
+    <div>
+      <div className="flex items-center gap-4 mb-3">
+        <div className="flex rounded-lg overflow-hidden border border-slate-800">
+          {['register', 'flavor'].map(s => (
+            <button key={s} onClick={() => setSpace(s)}
+              className={`px-3 py-1.5 text-xs ${space === s ? 'bg-sky-900/60 text-sky-200' : 'bg-slate-900 text-slate-500'}`}>
+              {s} space
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-slate-500">
+          {points.length} episodes · color = register · size = salience · fade = strength
+        </span>
+        {space === 'flavor' && points.length === 0 && (
+          <span className="text-xs text-amber-400">
+            no flavor projections yet — the reader captures in the nightly window
+          </span>
+        )}
+      </div>
+      <svg viewBox="0 0 760 500" className="w-full bg-slate-950/60 border border-slate-800 rounded-xl">
+        {points.map(p => (
+          <circle key={p.id} cx={sx(p.x)} cy={sy(p.y)}
+            r={3 + (p.salience || 0.5) * 7}
+            fill={`hsl(${hue(p.register || '')} 65% 60%)`}
+            opacity={Math.max(0.25, Math.min(0.95, p.strength || 1))}
+            className="cursor-pointer"
+            onMouseEnter={() => setHover(p)} onMouseLeave={() => setHover(null)}
+            onClick={() => setOpen(p.id)} />
+        ))}
+        {hover && (
+          <g>
+            <rect x={20} y={455} width={720} height={38} rx={8}
+              fill="#0f172acc" stroke="#1e293b" />
+            <text x={32} y={478} fill="#cbd5e1" fontSize="12">
+              #{hover.id} · {(hover.register || '').slice(0, 90)}
+            </text>
+          </g>
+        )}
+      </svg>
+      {open && <Dossier id={open} onClose={() => setOpen(null)} />}
+    </div>
+  )
+}
+
 function GateFeed({ scope }) {
   const [rows, setRows] = useState([])
   const lastId = useRef(0)
@@ -369,7 +431,7 @@ function GateFeed({ scope }) {
   )
 }
 
-const PAGES = { Overview, Episodes, Facts, Playground, 'Gate Feed': GateFeed }
+const PAGES = { Overview, Episodes, Facts, Atlas, Playground, 'Gate Feed': GateFeed }
 
 export default function App() {
   const [page, setPage] = useState('Overview')

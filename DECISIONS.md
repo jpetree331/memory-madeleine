@@ -1,6 +1,24 @@
 # DECISIONS — Madeleine
 *Reverse-chronological. Records reversals too.*
 
+## 2026-08-18 — S5.1-2: no HNSW index on episodes.flavor (measured limit)
+pgvector's hnsw supports ≤2000 dimensions; flavor is 4096 (Qwen3-8B hidden).
+The plan's "build the flavor HNSW after backfill" is unimplementable as
+written. Resolution: none needed — brute-force cosine over 4096-dim vectors
+is milliseconds at personal-fleet scale. Revisit (PCA-reduced indexed column
+beside the full vector) only if episode count approaches ~100k.
+
+## 2026-08-18 — S5.1-1: READER_LAYER = 14 (probed, not defaulted)
+GATE B verification ran on the real corpus: 6 technical vs 10
+intimate-philosophical episodes (classes drawn from the register census with
+exclusion logic — Grain's life blends them). Layer separation
+(within-class − between-class cosine), Qwen3-8B bf16, mean-pooled:
+L14 +0.1355 · L15 +0.1296 · L16 +0.1271 · L17 +0.1120 · L18 +0.1076 ·
+L19 +0.1016 · L20 +0.0921 · L21 +0.0877 · L22 +0.0846.
+Monotonic decay with depth; the plan's default (18) was mid-pack. Layer 14
+is the instrument's calibration mark. Changing it means rebuild_flavor.py
+over everything — same law as changing the reader.
+
 ## 2026-08-17 — S7-2: GATE B blessed — reader model is Qwen/Qwen3-8B
 Jess's call. Downloaded to the HF cache; Sprint 5.1 layer-probe next session.
 Clarified for the record: the reader is an instrument, not a participant —
