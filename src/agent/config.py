@@ -21,7 +21,11 @@ DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "").strip()
 # ── Retrieval knobs ────────────────────────────────────────────────────────────
 SALIENCE_THRESHOLD = float(os.environ.get("SALIENCE_THRESHOLD", "0.55"))
 SPREAD_HOPS = int(os.environ.get("SPREAD_HOPS", "3"))
-SPREAD_DECAY = float(os.environ.get("SPREAD_DECAY", "0.5"))
+# MEASURED 2026-08-17: at decay 0.5 a weight-1.0 three-hop chain lands on
+# 0.125 < threshold 0.15 — the canonical song→car association is unreachable
+# by construction. 0.6 puts 3 hops at 0.216 (reachable, with margin) while a
+# 4th hop (0.13) still dies below threshold. See DECISIONS S3-1.
+SPREAD_DECAY = float(os.environ.get("SPREAD_DECAY", "0.6"))
 SPREAD_THRESHOLD = float(os.environ.get("SPREAD_THRESHOLD", "0.15"))
 FACT_BUDGET_TOKENS = int(os.environ.get("FACT_BUDGET_TOKENS", "1200"))
 ASSOC_BUDGET_TOKENS = int(os.environ.get("ASSOC_BUDGET_TOKENS", "500"))

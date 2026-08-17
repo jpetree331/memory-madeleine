@@ -1,6 +1,15 @@
 # DECISIONS — Madeleine
 *Reverse-chronological. Records reversals too.*
 
+## 2026-08-17 — S3-1: SPREAD_DECAY default 0.5 → 0.6 (measured, not vibes)
+The plan's own acceptance test (song surfaces car through a 3-hop weight-1.0
+chain) is unreachable with the plan's own defaults: 0.5^3 = 0.125 < threshold
+0.15, always. First verify run failed on exactly this. 0.6^3 = 0.216 clears
+the threshold with margin while a 4th hop (0.13) still dies — associations
+stay bounded. The design conversation predicted this class of iteration
+("retrieval tuning is where all the actual iteration lives"); here is its
+first instance, on the first day, caught by the acceptance test doing its job.
+
 ## 2026-08-17 — S0-3: "Kill Postgres" verify adapted to bad-DSN simulation
 The Sprint 0 VERIFY asks for a Postgres-down boot test. The local Postgres
 instance is shared with Agent-Boardspace, Hindsight, and Rowan-family

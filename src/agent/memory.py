@@ -16,7 +16,7 @@ from datetime import datetime
 
 from pgvector.psycopg import register_vector
 
-from . import config, db, embeddings, episodes, extractor, gate
+from . import config, db, embeddings, episodes, extractor, gate, spread
 
 logger = logging.getLogger("madeleine.memory")
 
@@ -168,9 +168,9 @@ def _nearest_facts(scope: str, query: str, k: int) -> list[dict]:
 
 def recall(scope: str, query: str,
            fact_budget_tokens: int | None = None) -> list[dict]:
-    """Top-k cosine on active facts in scope, greedy-packed to the token
-    budget (~4 chars/token estimate). Returns [] on any failure — memory
-    degrades, conversations continue."""
+    """Phase 1 only: top-k cosine on active facts in scope, greedy-packed to
+    the token budget (~4 chars/token estimate). Returns [] on any failure —
+    memory degrades, conversations continue."""
     budget = fact_budget_tokens or config.FACT_BUDGET_TOKENS
     try:
         candidates = _nearest_facts(scope, query, _RECALL_CANDIDATES)
@@ -187,3 +187,30 @@ def recall(scope: str, query: str,
                        "created_at": f["created_at"],
                        "similarity": round(float(f["similarity"]), 4)})
     return packed
+
+
+def recall_full(scope: str, query: str,
+                fact_budget_tokens: int | None = None,
+                assoc_budget_tokens: int | None = None,
+                debug: bool = False) -> dict:
+    """Two-phase retrieval: facts (guaranteed budget) then spreading
+    activation (smaller, optional budget). Associations are labeled and
+    separate — never mixed into facts. Phase 2 failure degrades to
+    facts-only; phase 1 failure degrades to empty. The conversation
+    always continues."""
+    facts = recall(scope, query, fact_budget_tokens=fact_budget_tokens)
+    associations: list[dict] = []
+    debug_info = None
+    try:
+        with _conn() as conn:
+            result = spread.spread(conn, scope, query, facts,
+                                   assoc_budget_tokens=assoc_budget_tokens,
+                                   debug=debug)
+        associations, debug_info = result if debug else (result, None)
+    except Exception as e:
+        logger.error("spread failed (facts still served): %s", e)
+    out = {"facts": facts, "associations": associations,
+           "context_block": spread.render_context(facts, associations)}
+    if debug:
+        out["debug"] = debug_info
+    return out

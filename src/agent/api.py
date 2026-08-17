@@ -64,6 +64,8 @@ class RecallReq(BaseModel):
     scope: str = "companion"
     query: str
     fact_budget_tokens: int | None = None
+    assoc_budget_tokens: int | None = None
+    debug: bool = False
 
 
 @app.post("/api/retain")
@@ -86,13 +88,16 @@ def retain(req: RetainReq):
 
 @app.post("/api/recall")
 def recall(req: RecallReq):
-    """Phase-1 retrieval: semantic top-k over active facts in scope,
-    greedy-packed to budget. Associations join in Sprint 3."""
+    """Two-phase retrieval: semantic facts (guaranteed budget) + spreading-
+    activation associations (optional budget, labeled, never mixed into
+    facts). debug=true adds seeds, per-hop activations, and packing counts —
+    the Observatory's recall debugger runs on it."""
     if not req.query.strip():
         raise HTTPException(422, "Empty query")
-    facts = memory.recall(req.scope, req.query.strip(),
-                          fact_budget_tokens=req.fact_budget_tokens)
-    return {"facts": facts}
+    return memory.recall_full(req.scope, req.query.strip(),
+                              fact_budget_tokens=req.fact_budget_tokens,
+                              assoc_budget_tokens=req.assoc_budget_tokens,
+                              debug=req.debug)
 
 
 # StaticFiles mounted LAST so API routes win (dashboard arrives Sprint 7)
