@@ -54,6 +54,17 @@ def _startup():
         logger.info("consolidation scheduled nightly at %02d:00", config.NIGHTLY_HOUR)
     except Exception as e:
         logger.error("scheduler failed to start (service continues): %s", e)
+    # Warm the embedder off the critical path — the first recall after a
+    # restart otherwise pays the full bge-m3 lazy-load (~15s)
+    def _warm():
+        try:
+            from . import embeddings
+            embeddings.embed(["warmup"])
+            logger.info("embedder warm")
+        except Exception as e:
+            logger.warning("embedder warmup failed (will lazy-load): %s", e)
+    import threading
+    threading.Thread(target=_warm, daemon=True).start()
     logger.info("Madeleine up on %d — db_ready=%s", config.PORT, DB_READY)
 
 
@@ -240,6 +251,77 @@ def episode_pin(episode_id: int):
             if not row:
                 raise HTTPException(404, "Episode not found")
     return {"pinned": row["pinned"]}
+
+
+class QuarantineReq(BaseModel):
+    action: str   # 'approve' (un-quarantine) | 'deny' (keep dark)
+
+
+@app.post("/api/quarantine/{episode_id}")
+def quarantine_review(episode_id: int, req: QuarantineReq):
+    """Human review of gate flags — the second of the two mutating controls.
+    approve = the episode rejoins retrieval; deny = stays dark. Logged."""
+    if req.action not in ("approve", "deny"):
+        raise HTTPException(422, "action must be approve | deny")
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT quarantined FROM episodes WHERE id=%s", (episode_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Episode not found")
+            if req.action == "approve":
+                cur.execute("UPDATE episodes SET quarantined=FALSE WHERE id=%s",
+                            (episode_id,))
+    logger.info("quarantine review: episode %d %sd", episode_id, req.action)
+    return {"episode_id": episode_id, "action": req.action,
+            "quarantined": req.action != "approve"}
+
+
+@app.get("/api/facts")
+def facts_list(scope: str | None = None, q: str | None = None,
+               status: str | None = None, kind: str | None = None,
+               page: int = 1, page_size: int = 50):
+    """The semantic store, visible. With q: live pgvector cosine search —
+    the raw RAG view. Without: paged listing, newest first."""
+    clauses, params = [], []
+    if scope:
+        clauses.append("scope=%s"); params.append(scope)
+    if status:
+        clauses.append("status=%s"); params.append(status)
+    if kind:
+        clauses.append("kind=%s"); params.append(kind)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    if q and q.strip():
+        from . import embeddings
+        from pgvector.psycopg import register_vector
+        try:
+            qvec = embeddings.embed([q.strip()])[0]
+        except Exception as e:
+            logger.error("facts search embed failed: %s", e)
+            raise HTTPException(503, "embedder unavailable")
+        with db.get_connection() as conn:
+            register_vector(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT id, scope, content, kind, status, superseded_by, "
+                    f"source_episode_id, source_ref, created_at, "
+                    f"1 - (embedding <=> %s::vector) AS similarity FROM facts "
+                    f"{where + (' AND' if where else 'WHERE')} embedding IS NOT NULL "
+                    f"ORDER BY embedding <=> %s::vector LIMIT %s",
+                    [qvec] + params + [qvec, page_size])
+                rows = [dict(r) for r in cur.fetchall()]
+        return {"total": len(rows), "facts": rows, "mode": "semantic"}
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS c FROM facts {where}", params)
+            total = cur.fetchone()["c"]
+            cur.execute(
+                f"SELECT id, scope, content, kind, status, superseded_by, "
+                f"source_episode_id, source_ref, created_at FROM facts {where} "
+                f"ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                params + [page_size, (page - 1) * page_size])
+            rows = [dict(r) for r in cur.fetchall()]
+    return {"total": total, "facts": rows, "mode": "list"}
 
 
 @app.get("/api/atlas")

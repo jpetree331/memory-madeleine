@@ -196,6 +196,61 @@ function Episodes({ scope }) {
   )
 }
 
+function Facts({ scope }) {
+  const [data, setData] = useState({ facts: [], total: 0, mode: 'list' })
+  const [q, setQ] = useState('')
+  const [status, setStatus] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const p = new URLSearchParams()
+      if (scope) p.set('scope', scope)
+      if (q.trim()) p.set('q', q.trim())
+      if (status) p.set('status', status)
+      fetch(`${API}/facts?${p}`).then(r => r.json()).then(setData)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [q, scope, status])
+  return (
+    <div>
+      <div className="flex gap-3 mb-4">
+        <input value={q} onChange={e => setQ(e.target.value)}
+          placeholder="semantic search (live pgvector cosine)…"
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm flex-1" />
+        <select value={status} onChange={e => setStatus(e.target.value)}
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm">
+          <option value="">all statuses</option>
+          <option value="active">active</option>
+          <option value="superseded">superseded</option>
+        </select>
+        <span className="text-slate-500 text-sm self-center">
+          {data.total} facts · {data.mode === 'semantic' ? 'ranked by cosine' : 'newest first'}
+        </span>
+      </div>
+      <div className="space-y-1.5">
+        {data.facts.map(f => (
+          <div key={f.id}
+            className={`bg-slate-900/50 border border-slate-800/70 rounded-lg px-4 py-2.5 text-sm
+              ${f.status === 'superseded' ? 'opacity-50' : ''}`}>
+            <span className={f.status === 'superseded' ? 'line-through text-slate-500' : 'text-slate-200'}>
+              {f.content}
+            </span>
+            <span className="text-xs text-slate-600 ml-2">
+              {f.kind === 'derived' && <span className="text-violet-400 mr-2">derived</span>}
+              {f.status === 'superseded' && <span className="mr-2">→ #{f.superseded_by}</span>}
+              {f.similarity != null && <span className="text-emerald-500 mr-2">cos {f.similarity.toFixed(3)}</span>}
+              {f.source_episode_id && <span className="mr-2">ep {f.source_episode_id}</span>}
+              <span>{f.source_ref}</span>
+            </span>
+          </div>
+        ))}
+        {data.facts.length === 0 && (
+          <p className="text-slate-600 text-sm">No facts here yet — truth accumulates one exchange at a time.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Playground({ scope: navScope }) {
   const [scope, setScope] = useState(navScope || 'companion')
   useEffect(() => { if (navScope) setScope(navScope) }, [navScope])
@@ -314,7 +369,7 @@ function GateFeed({ scope }) {
   )
 }
 
-const PAGES = { Overview, Episodes, Playground, 'Gate Feed': GateFeed }
+const PAGES = { Overview, Episodes, Facts, Playground, 'Gate Feed': GateFeed }
 
 export default function App() {
   const [page, setPage] = useState('Overview')
