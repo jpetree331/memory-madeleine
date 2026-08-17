@@ -34,9 +34,12 @@ const SalienceDots = ({ salience }) => (
   </span>
 )
 
-function Overview() {
+function Overview({ scope }) {
   const [stats, setStats] = useState(null)
-  useEffect(() => { fetch(`${API}/stats`).then(r => r.json()).then(setStats) }, [])
+  useEffect(() => {
+    fetch(`${API}/stats${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`)
+      .then(r => r.json()).then(setStats)
+  }, [scope])
   if (!stats) return <p className="text-slate-500">reading the sky…</p>
   const ep = stats.episodes || {}
   const cards = [
@@ -144,17 +147,18 @@ function Dossier({ id, onClose }) {
   )
 }
 
-function Episodes() {
+function Episodes({ scope }) {
   const [data, setData] = useState({ episodes: [], total: 0 })
   const [q, setQ] = useState('')
   const [sort, setSort] = useState('created_at')
   const [open, setOpen] = useState(null)
   useEffect(() => {
     const t = setTimeout(() =>
-      fetch(`${API}/episodes?sort=${sort}${q ? `&q=${encodeURIComponent(q)}` : ''}`)
+      fetch(`${API}/episodes?sort=${sort}${q ? `&q=${encodeURIComponent(q)}` : ''}` +
+            (scope ? `&scope=${encodeURIComponent(scope)}` : ''))
         .then(r => r.json()).then(setData), 200)
     return () => clearTimeout(t)
-  }, [q, sort])
+  }, [q, sort, scope])
   return (
     <div>
       <div className="flex gap-3 mb-4">
@@ -192,8 +196,9 @@ function Episodes() {
   )
 }
 
-function Playground() {
-  const [scope, setScope] = useState('companion')
+function Playground({ scope: navScope }) {
+  const [scope, setScope] = useState(navScope || 'companion')
+  useEffect(() => { if (navScope) setScope(navScope) }, [navScope])
   const [query, setQuery] = useState('')
   const [mood, setMood] = useState('')
   const [out, setOut] = useState(null)
@@ -266,7 +271,7 @@ function Playground() {
   )
 }
 
-function GateFeed() {
+function GateFeed({ scope }) {
   const [rows, setRows] = useState([])
   const lastId = useRef(0)
   useEffect(() => {
@@ -275,13 +280,17 @@ function GateFeed() {
       try {
         const r = await fetch(`${API}/gate/feed?after_id=0`)
         const d = await r.json()
-        if (live && d.rows) { setRows(d.rows); lastId.current = d.rows[0]?.id || 0 }
+        if (live && d.rows) {
+          const filtered = scope ? d.rows.filter(x => x.scope === scope) : d.rows
+          setRows(filtered)
+          lastId.current = d.rows[0]?.id || 0
+        }
       } catch { /* keep polling */ }
     }
     poll()
     const t = setInterval(poll, 3000)
     return () => { live = false; clearInterval(t) }
-  }, [])
+  }, [scope])
   const chip = (d) => ({
     episode: 'bg-emerald-900/50 text-emerald-300', facts_only: 'bg-slate-800 text-slate-400',
     quarantined: 'bg-rose-900/50 text-rose-300', skipped: 'bg-slate-800 text-slate-500',
@@ -309,12 +318,28 @@ const PAGES = { Overview, Episodes, Playground, 'Gate Feed': GateFeed }
 
 export default function App() {
   const [page, setPage] = useState('Overview')
+  const [scope, setScope] = useState('')          // '' = all skies
+  const [scopes, setScopes] = useState([])
+  useEffect(() => {
+    fetch(`${API}/scopes`).then(r => r.json())
+      .then(d => setScopes(d.scopes || [])).catch(() => {})
+  }, [page])
   const Page = PAGES[page]
   return (
     <div className="min-h-screen flex">
       <nav className="w-44 border-r border-slate-800/80 p-4 shrink-0">
         <h1 className="text-sky-200 font-semibold mb-1">Madeleine</h1>
-        <p className="text-xs text-slate-600 mb-6">the Observatory</p>
+        <p className="text-xs text-slate-600 mb-4">the Observatory</p>
+        <select value={scope} onChange={e => setScope(e.target.value)}
+          title="Whose memory to observe — one scope per agent"
+          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs mb-5 text-slate-300">
+          <option value="">all scopes</option>
+          {scopes.map(s => (
+            <option key={s.scope} value={s.scope}>
+              {s.scope} ({s.episodes})
+            </option>
+          ))}
+        </select>
         {Object.keys(PAGES).map(p => (
           <button key={p} onClick={() => setPage(p)}
             className={`block w-full text-left text-sm rounded-lg px-3 py-2 mb-1
@@ -327,7 +352,7 @@ export default function App() {
         </p>
       </nav>
       <main className="flex-1 p-6 overflow-x-hidden">
-        <Page />
+        <Page scope={scope || null} />
       </main>
     </div>
   )

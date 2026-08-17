@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 
 import httpx
 
@@ -51,9 +53,38 @@ Respond with STRICT JSON only, no markdown fences:
  "entities": [{"key": "granddad", "name": "Granddad", "kind": "person"}]}"""
 
 
+def _chat_claude_code(system: str, user: str) -> str | None:
+    """The subscription door: headless Claude Code (`claude -p`) rides Jess's
+    Max login — zero marginal cost for personal use. Slower than the API
+    (process spawn) which is fine for fire-and-forget extraction."""
+    import subprocess
+    try:
+        exe = shutil.which("claude")
+        if not exe:
+            logger.warning("claude CLI not on PATH — claude-code door unavailable")
+            return None
+        cmd = [exe, "-p", user, "--append-system-prompt", system,
+               "--model", os.environ.get("EXTRACTOR_CC_MODEL", "haiku"),
+               "--max-turns", "1"]
+        if exe.lower().endswith((".cmd", ".bat")):
+            cmd = ["cmd", "/c"] + cmd
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180,
+                           encoding="utf-8", errors="replace")
+        if r.returncode != 0:
+            logger.warning("claude-code door failed rc=%d: %s",
+                           r.returncode, (r.stderr or "")[:200])
+            return None
+        return (r.stdout or "").strip() or None
+    except Exception as e:
+        logger.warning("claude-code door failed: %s", e)
+        return None
+
+
 def _chat(system: str, user: str, max_tokens: int = 1500) -> str | None:
     """One completion through the configured door. None on any failure."""
     try:
+        if config.EXTRACTOR_PROVIDER == "claude-code":
+            return _chat_claude_code(system, user)
         if config.EXTRACTOR_PROVIDER == "anthropic" and config.ANTHROPIC_API_KEY:
             import anthropic
             client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)

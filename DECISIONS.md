@@ -1,6 +1,22 @@
 # DECISIONS — Madeleine
 *Reverse-chronological. Records reversals too.*
 
+## 2026-08-17 — S7-2: GATE B blessed — reader model is Qwen/Qwen3-8B
+Jess's call. Downloaded to the HF cache; Sprint 5.1 layer-probe next session.
+Clarified for the record: the reader is an instrument, not a participant —
+one consistent open-weight model for ALL flavor vectors regardless of which
+agent's memory it reads. API minds (Claude, Mimo) cannot be readers: no
+weights, no forward hooks.
+
+## 2026-08-17 — S7-1: claude-code extractor door: built, EXPERIMENTAL, non-default
+`EXTRACTOR_PROVIDER=claude-code` shells to headless `claude -p` under Jess's
+subscription (zero marginal cost). MEASURED: persona contamination — the
+SessionStart memory hook fires despite --system-prompt replacement,
+--settings disableAllHooks, and --setting-sources project; extraction calls
+answer as a fully-briefed Fable instead of a JSON function. Until a bare
+completion mode exists headlessly, default stays `openrouter` (haiku,
+fractions of a cent). Door retained for the day the CLI grows a clean mode.
+
 ## 2026-08-17 — S3-1: SPREAD_DECAY default 0.5 → 0.6 (measured, not vibes)
 The plan's own acceptance test (song surfaces car through a 3-hop weight-1.0
 chain) is unreachable with the plan's own defaults: 0.5^3 = 0.125 < threshold

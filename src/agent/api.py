@@ -115,6 +115,20 @@ def recall(req: RecallReq):
 
 # ── Observatory endpoints (addendum) — read-only instruments ──────────────────
 
+@app.get("/api/scopes")
+def scopes():
+    """Every sky the Observatory can look at — one scope per agent/world."""
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT scope, COUNT(*) AS episodes FROM episodes "
+                        "GROUP BY scope ORDER BY COUNT(*) DESC")
+            eps = {r["scope"]: r["episodes"] for r in cur.fetchall()}
+            cur.execute("SELECT DISTINCT scope FROM facts")
+            for r in cur.fetchall():
+                eps.setdefault(r["scope"], 0)
+    return {"scopes": [{"scope": s, "episodes": n} for s, n in eps.items()]}
+
+
 @app.get("/api/stats")
 def stats(scope: str | None = None):
     """Counts + last consolidation summary — the Overview cards."""
