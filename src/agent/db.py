@@ -81,6 +81,36 @@ CREATE TABLE IF NOT EXISTS edges (
   UNIQUE (src_kind, src_id, dst_kind, dst_id, kind)
 );
 
+-- extraction queue marker: NULL = queued/unprocessed (Sprint 1)
+ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS extracted_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS episode_revisions (   -- reconsolidation audit trail
+  id SERIAL PRIMARY KEY,                          -- (Observatory addendum)
+  episode_id INT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+  trace TEXT NOT NULL,                            -- the trace as it was BEFORE rewrite
+  strength REAL,
+  rewritten_at TIMESTAMPTZ DEFAULT NOW(),
+  reason TEXT                                     -- 'reconsolidation' | 'decay_compress' | 'tombstone'
+);
+CREATE INDEX IF NOT EXISTS idx_revisions_ep ON episode_revisions (episode_id);
+
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS proj_x REAL;      -- flavor projection, nightly
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS proj_y REAL;
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS reg_proj_x REAL;  -- register-emb projection
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS reg_proj_y REAL;
+
+CREATE TABLE IF NOT EXISTS gate_log (            -- live feed source; also great debugging
+  id SERIAL PRIMARY KEY,
+  scope TEXT NOT NULL,
+  salience REAL,
+  register TEXT,
+  decision TEXT NOT NULL,                        -- 'episode' | 'facts_only' | 'quarantined' | 'skipped'
+  exchange_id INT REFERENCES raw_exchanges(id),
+  episode_id INT REFERENCES episodes(id),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_edges_src ON edges (src_kind, src_id);
 CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges (dst_kind, dst_id);
 CREATE INDEX IF NOT EXISTS idx_facts_emb ON facts USING hnsw (embedding vector_cosine_ops);

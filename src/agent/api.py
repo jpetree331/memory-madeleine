@@ -11,11 +11,12 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from . import config, db
+from . import config, db, memory
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -49,6 +50,49 @@ def _startup():
 def health():
     """Fleet-dashboard health probe."""
     return {"status": "ok", "service": "madeleine", "db_ready": DB_READY}
+
+
+class RetainReq(BaseModel):
+    scope: str = "companion"
+    speaker: str                       # 'user' | 'agent' | 'system'
+    content: str
+    occurred_at: str | None = None
+    source_ref: str | None = None      # backfill provenance, e.g. 'rowan.messages:18234'
+
+
+class RecallReq(BaseModel):
+    scope: str = "companion"
+    query: str
+    fact_budget_tokens: int | None = None
+
+
+@app.post("/api/retain")
+def retain(req: RetainReq):
+    """Fire-and-forget write: raw exchange lands synchronously (durable),
+    extraction runs in a daemon thread. Returns immediately."""
+    if not req.content.strip():
+        raise HTTPException(422, "Empty content")
+    if req.speaker not in ("user", "agent", "system"):
+        raise HTTPException(422, "speaker must be user | agent | system")
+    try:
+        exchange_id = memory.retain(req.scope, req.speaker, req.content.strip(),
+                                    occurred_at=req.occurred_at,
+                                    source_ref=req.source_ref)
+    except Exception as e:
+        logger.error("retain failed at the raw layer: %s", e)
+        raise HTTPException(503, "raw store unavailable")
+    return {"ok": True, "exchange_id": exchange_id}
+
+
+@app.post("/api/recall")
+def recall(req: RecallReq):
+    """Phase-1 retrieval: semantic top-k over active facts in scope,
+    greedy-packed to budget. Associations join in Sprint 3."""
+    if not req.query.strip():
+        raise HTTPException(422, "Empty query")
+    facts = memory.recall(req.scope, req.query.strip(),
+                          fact_budget_tokens=req.fact_budget_tokens)
+    return {"facts": facts}
 
 
 # StaticFiles mounted LAST so API routes win (dashboard arrives Sprint 7)
