@@ -48,6 +48,9 @@ Rules, learned from forensic audits of prior memory systems — they are not sty
   "the AI" as a person-referent, stop and write the name instead. Role words
   are schema, not people — a fact that says "the agent did X" has lost track
   of who did X (the Grain audit-#4 catch).
+- PRONOUN FIDELITY: use for each person exactly the pronouns the record uses
+  for them; never transfer one person's pronouns to another. If the record
+  never shows a person's pronouns, use they/them — never guess.
 - Only extract what is actually in the exchange. No world knowledge, no elaboration.
 - 0 to 6 facts per exchange. Routine chit-chat may yield zero. Quality over count.
 
@@ -125,6 +128,53 @@ def _chat(system: str, user: str, max_tokens: int = 1500,
     except Exception as e:
         logger.warning("extractor call failed: %s", e)
         return None
+
+
+VERIFY_SYSTEM = """You are the write-time verifier for a memory system — the auditor at the door.
+
+You receive one conversation exchange (ground truth) and a list of candidate
+facts extracted from it. For each fact, check ONLY against the exchange:
+1. SUPPORTED — is the fact actually stated or directly evidenced there?
+2. SPEAKER — is every statement/belief/action attributed to the right person?
+3. VERB — are speech-act verbs exact (mentioned≠named, asked≠said, plan≠did)?
+4. PRONOUNS — does each person wear only their own pronouns from the record?
+5. REFERENT — no "the user"/"the agent"/"the assistant" as a person.
+
+Respond STRICT JSON only:
+{"verdicts": [{"index": 0, "ok": true} , {"index": 1, "ok": false, "why": "..."}]}
+Reject when in doubt — a missing fact costs little; a wrong one corrupts a life."""
+
+
+def verify_facts(exchange_text: str, facts: list[str]) -> list[str]:
+    """Second-opinion pass (Jess: 'prevent at the source, not in post').
+    Returns only the facts that survive verification. Verifier failure
+    degrades OPEN (all facts pass) — a dead auditor must not silence memory;
+    the post-hoc audit culture remains the backstop."""
+    if not facts:
+        return facts
+    from . import config
+    user = (f"## Exchange (ground truth)\n{exchange_text}\n\n## Candidate facts\n"
+            + "\n".join(f"[{i}] {f}" for i, f in enumerate(facts)))
+    raw = _chat(VERIFY_SYSTEM, user, max_tokens=600, model=config.GATE_MODEL)
+    if raw is None:
+        return facts
+    try:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned[cleaned.find("{"):cleaned.rfind("}") + 1]
+        verdicts = {int(v["index"]): v for v in json.loads(cleaned).get("verdicts", [])}
+        kept = []
+        for i, f in enumerate(facts):
+            v = verdicts.get(i, {"ok": True})
+            if v.get("ok", True):
+                kept.append(f)
+            else:
+                logger.info("verifier rejected fact at the door: %r (%s)",
+                            f[:100], v.get("why", "no reason"))
+        return kept
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning("verifier unparseable (%s) — degrading open", e)
+        return facts
 
 
 def extract_facts(exchange_text: str, near_facts: list[dict]) -> dict | None:

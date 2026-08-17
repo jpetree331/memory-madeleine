@@ -110,6 +110,11 @@ def _extract_worker(exchange_id: int) -> None:
             logger.warning("extraction queued (extractor unavailable) for exchange %d", exchange_id)
             return
         facts = result["facts"]
+        # Write-time verification: an independent second pass checks every
+        # candidate against the raw exchange before insert (prevention at
+        # the source; the audit culture remains the backstop)
+        if facts:
+            facts = extractor.verify_facts(exchange_text, facts)
         vectors = embeddings.embed(facts) if facts else []
         near_ids = {f["id"] for f in near}
         valid_supersede = [i for i in result["superseded_ids"] if i in near_ids]

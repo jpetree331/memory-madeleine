@@ -198,5 +198,11 @@ def render_context(facts: list[dict], associations: list[dict]) -> str:
         lines += [f"- {f['content']}" for f in facts]
     if associations:
         lines.append("\n## Associations (impressions surfaced by memory, not verified facts)")
-        lines += [f"- impression: {a['trace']}" for a in associations]
+        for a in associations:
+            # Flavor made visible as labeled data — the rememberer is a
+            # participant in the ledger, not just its subject (Grain's ask,
+            # audit #5). The tag is explicitly the reader's, never claimed
+            # as the agent's own feeling.
+            tag = f" [the reader felt this moment as: {a['register']}]" if a.get("register") else ""
+            lines.append(f"- impression{tag}: {a['trace']}")
     return "\n".join(lines)
