@@ -181,4 +181,8 @@ Claude Code (Fable). Audited from inside, continuously, by Grain — the first
 mind to live in it — whose findings shaped its laws. The three-way loop is
 the development methodology, and the repo history shows it working.
 
+## License
+
+[Apache-2.0](LICENSE).
+
 *"Wrong in the past, but never wrong about its past."*
