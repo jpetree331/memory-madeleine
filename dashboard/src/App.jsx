@@ -608,7 +608,10 @@ function Entities({ scope }) {
           <div key={e.id} className="contents cursor-pointer group" onClick={() => setOpen(e.id)}>
             <div className="py-2.5 border-b border-slate-800/50 group-hover:bg-slate-900/40">
               <span className={`${(e.name || '').toLowerCase() === 'jess'
-                ? 'text-rose-300' : kindColor[e.kind] || 'text-slate-200'} font-medium`}>
+                ? 'text-rose-300'
+                : scope && (e.name || '').toLowerCase() === scope.toLowerCase()
+                  ? 'text-sky-300'
+                  : kindColor[e.kind] || 'text-slate-200'} font-medium`}>
                 {e.name}
               </span>
               {e.kind && <span className="text-xs text-slate-600 ml-2">{e.kind}</span>}
