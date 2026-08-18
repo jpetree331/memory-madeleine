@@ -112,7 +112,12 @@ def _chat_claude_sdk(system: str, user: str, model: str) -> str | None:
 
         async def _run():
             options = ClaudeAgentOptions(
-                system_prompt=system, max_turns=1, allowed_tools=[],
+                system_prompt=system, max_turns=2, allowed_tools=[],
+                # Explicitly empty: MEASURED 2026-08-18 — without this, rich
+                # conversational prompts pulled the user-level persona through
+                # ("I'm Fable, not Rowan") even though short prompts stayed
+                # clean. The extractor must be nobody.
+                setting_sources=[],
                 model=_SDK_MODEL_MAP.get(model, model))
             out = []
             async for msg in query(prompt=user, options=options):
