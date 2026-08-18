@@ -74,7 +74,7 @@ const WhenChip = ({ occurred, created }) => {
   return t ? (
     <span className="text-xs text-slate-500 whitespace-nowrap"
       title={occurred ? `occurred ${occurred}` : `retained ${created} (no event date)`}>
-      {t.slice(0, 10)}{!occurred && '*'}
+      {t.slice(0, 16).replace('T', ' ')}{!occurred && '*'}
     </span>
   ) : null
 }
@@ -309,7 +309,7 @@ function Facts({ scope }) {
               {(f.occurred_at || f.created_at) && (
                 <span className="text-slate-500 mr-2"
                   title={f.occurred_at ? `occurred ${f.occurred_at}` : `retained ${f.created_at} (no event date)`}>
-                  {(f.occurred_at || f.created_at).slice(0, 10)}{!f.occurred_at && '*'}
+                  {(f.occurred_at || f.created_at).slice(0, 16).replace('T', ' ')}{!f.occurred_at && '*'}
                 </span>
               )}
               {f.kind === 'derived' && <span className="text-violet-400 mr-2">derived</span>}
