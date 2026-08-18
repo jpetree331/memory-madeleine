@@ -144,7 +144,10 @@ def curate(rows):
             if visible:
                 items.append({"message_id": r["id"], "speaker": "agent",
                               "content": f"Rowan: {frame}{visible}",
-                              "occurred_at": occurred, "private": is_private})
+                              "occurred_at": occurred, "private": is_private,
+                              # Reality law: a framed turn answered a trigger,
+                              # not a person — only Rowan's mind was present.
+                              "solitary": bool(frame)})
                 stats["kept_rowan"] += 1
                 if is_private:
                     stats["kept_private_marked"] += 1
@@ -176,10 +179,11 @@ def ingest_one(item):
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO raw_exchanges (scope, speaker, content, source_ref, "
-                "occurred_at, private) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                "occurred_at, private, solitary) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING id",
                 (SCOPE, item["speaker"], item["content"],
                  f"rowan.messages:{item['message_id']}", item["occurred_at"],
-                 item.get("private", False)))
+                 item.get("private", False), item.get("solitary", False)))
             ex_id = cur.fetchone()["id"]
     memory._extract_worker(ex_id)
     with db.get_connection() as conn:

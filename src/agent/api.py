@@ -80,6 +80,7 @@ class RetainReq(BaseModel):
     content: str
     occurred_at: str | None = None
     source_ref: str | None = None      # backfill provenance, e.g. 'rowan.messages:18234'
+    solitary: bool = False             # only the author was present (heartbeat/cron)
 
 
 class RecallReq(BaseModel):
@@ -102,7 +103,8 @@ def retain(req: RetainReq):
     try:
         exchange_id = memory.retain(req.scope, req.speaker, req.content.strip(),
                                     occurred_at=req.occurred_at,
-                                    source_ref=req.source_ref)
+                                    source_ref=req.source_ref,
+                                    solitary=req.solitary)
     except Exception as e:
         logger.error("retain failed at the raw layer: %s", e)
         raise HTTPException(503, "raw store unavailable")
@@ -188,25 +190,28 @@ def episodes_list(scope: str | None = None, q: str | None = None,
     """Paged episode browser. Register text search via q."""
     sort_col = sort if sort in ("occurred_at", "salience", "strength", "recall_count",
                                 "created_at") else "created_at"
+    sort_col = f"e.{sort_col}"
     clauses, params = [], []
     if scope:
-        clauses.append("scope=%s"); params.append(scope)
+        clauses.append("e.scope=%s"); params.append(scope)
     if q:
-        clauses.append("(register ILIKE %s OR trace ILIKE %s)")
+        clauses.append("(e.register ILIKE %s OR e.trace ILIKE %s)")
         params += [f"%{q}%", f"%{q}%"]
     if quarantined is not None:
-        clauses.append("quarantined=%s"); params.append(quarantined)
+        clauses.append("e.quarantined=%s"); params.append(quarantined)
     if pinned is not None:
-        clauses.append("pinned=%s"); params.append(pinned)
+        clauses.append("e.pinned=%s"); params.append(pinned)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     with db.get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) AS c FROM episodes {where}", params)
+            cur.execute(f"SELECT COUNT(*) AS c FROM episodes e {where}", params)
             total = cur.fetchone()["c"]
             cur.execute(
-                f"SELECT id, scope, trace, register, salience, strength, quarantined, "
-                f"pinned, recall_count, occurred_at, created_at, last_recalled_at "
-                f"FROM episodes {where} ORDER BY {sort_col} DESC NULLS LAST "
+                f"SELECT e.id, e.scope, e.trace, e.register, e.salience, e.strength, "
+                f"e.quarantined, e.pinned, e.recall_count, e.occurred_at, e.created_at, "
+                f"e.last_recalled_at, COALESCE(r.solitary, FALSE) AS solitary "
+                f"FROM episodes e LEFT JOIN raw_exchanges r ON r.id = e.exchange_start "
+                f"{where} ORDER BY {sort_col} DESC NULLS LAST "
                 f"LIMIT %s OFFSET %s", params + [page_size, (page - 1) * page_size])
             rows = [dict(r) for r in cur.fetchall()]
     return {"total": total, "episodes": rows}
@@ -223,6 +228,10 @@ def episode_dossier(episode_id: int):
                 raise HTTPException(404, "Episode not found")
             ep = {k: v for k, v in dict(ep).items()
                   if k not in ("register_emb", "flavor")}
+            cur.execute("SELECT COALESCE(solitary, FALSE) AS s FROM raw_exchanges "
+                        "WHERE id=%s", (ep.get("exchange_start"),))
+            row_s = cur.fetchone()
+            ep["solitary"] = bool(row_s["s"]) if row_s else False
             cur.execute(
                 "SELECT en.id, en.key, en.name, en.kind, e.weight FROM edges e "
                 "JOIN entities en ON en.id = e.dst_id "

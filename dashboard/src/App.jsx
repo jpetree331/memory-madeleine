@@ -249,6 +249,7 @@ function Dossier({ id, onClose }) {
           <RegisterChip register={ep.register} />
           <SalienceDots salience={ep.salience} />
           <StrengthBar strength={ep.strength} />
+          {ep.solitary && <span title="solitary — the agent's own time; any company in this memory was imagined">🌙 solitary</span>}
           {ep.quarantined && <span className="text-rose-400 text-xs">QUARANTINED</span>}
         </div>
         <p className="text-slate-200 leading-relaxed mb-4"><Hi text={ep.trace} /></p>
@@ -330,6 +331,7 @@ function Episodes({ scope }) {
               <RegisterChip register={ep.register} />
               <SalienceDots salience={ep.salience} />
               <StrengthBar strength={ep.strength} />
+              {ep.solitary && <span title="solitary — the agent's own time; any company in this memory was imagined">🌙</span>}
               {ep.pinned && <span title="pinned">📌</span>}
               {ep.quarantined && <span className="text-rose-400 text-xs">QUARANTINED</span>}
               <span className="text-xs text-slate-600 ml-auto flex items-center gap-3">
@@ -880,6 +882,14 @@ function Legend() {
           <em>happened</em> (its true event time), not when it was written down. A trailing{' '}
           <span className="text-slate-300">*</span> means no event time is known, so the write time is
           shown instead.
+        </p>
+        <p>
+          <span className="text-slate-200">🌙 Solitary</span> marks a memory born with only the agent's
+          mind present — a heartbeat, a scheduled session, a reflection with no one watching. The
+          reality law applies to these: any dialogue inside them was <em>imagined</em>, and memory is
+          required to remember it as imagination, never as the other person's actual words. Recall
+          surfaces these labeled as the agent's own time, so a 1 AM rehearsal can never later wear the
+          authority of a real conversation.
         </p>
       </LegendSection>
 

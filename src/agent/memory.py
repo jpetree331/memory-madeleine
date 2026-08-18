@@ -34,19 +34,31 @@ def _conn():
 
 def retain(scope: str, speaker: str, content: str,
            occurred_at: str | None = None,
-           source_ref: str | None = None) -> int:
+           source_ref: str | None = None,
+           solitary: bool = False) -> int:
     """Write the raw exchange (synchronous, durable), then extract in the
-    background. Returns the raw_exchanges id immediately."""
+    background. Returns the raw_exchanges id immediately.
+
+    solitary=True marks an exchange where only the author's mind was present
+    (heartbeat, cron session, solo reflection) — the reality law then keeps
+    any imagined dialogue inside it from entering memory as another person's
+    speech (the Rexie lesson, 2026-08-18)."""
     with _conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO raw_exchanges (scope, speaker, content, source_ref, occurred_at) "
-                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (scope, speaker, content, source_ref, occurred_at),
+                "INSERT INTO raw_exchanges (scope, speaker, content, source_ref, "
+                "occurred_at, solitary) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (scope, speaker, content, source_ref, occurred_at, solitary),
             )
             exchange_id = cur.fetchone()["id"]
     threading.Thread(target=_extract_worker, args=(exchange_id,), daemon=True).start()
     return exchange_id
+
+
+SOLITARY_BANNER = (
+    "[SOLITARY EXCHANGE — only the author was present. Nobody else spoke, "
+    "heard, or replied. Any dialogue, quotes, or addressed speech below is "
+    "the author's imagination and must be remembered as imagination.]\n")
 
 
 def _extract_worker(exchange_id: int) -> None:
@@ -65,6 +77,9 @@ def _extract_worker(exchange_id: int) -> None:
         if not row:
             return
         exchange_text = f"{row['speaker']}: {row['content']}"
+        if row.get("solitary"):
+            # One banner reaches every reader: gate, trace, extract, verify.
+            exchange_text = SOLITARY_BANNER + exchange_text
 
         # 1. The gate — salience AND sanitization, one judgment
         g = gate.assess(exchange_text)

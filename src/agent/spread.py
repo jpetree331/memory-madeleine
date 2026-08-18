@@ -80,9 +80,11 @@ def _conducting_episodes(conn, episode_ids: set[int], scope: str) -> dict[int, d
         return {}
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, scope, trace, register, register_emb, salience, strength, "
-            "occurred_at FROM episodes "
-            "WHERE id = ANY(%s) AND NOT quarantined AND strength >= 0.1",
+            "SELECT e.id, e.scope, e.trace, e.register, e.register_emb, "
+            "e.salience, e.strength, e.occurred_at, "
+            "COALESCE(r.solitary, FALSE) AS solitary FROM episodes e "
+            "LEFT JOIN raw_exchanges r ON r.id = e.exchange_start "
+            "WHERE e.id = ANY(%s) AND NOT e.quarantined AND e.strength >= 0.1",
             (list(episode_ids),),
         )
         return {r["id"]: dict(r) for r in cur.fetchall()}
@@ -171,6 +173,7 @@ def spread(conn, scope: str, query: str, fact_hits: list[dict],
         spent += cost
         item = {"episode_id": c["id"], "trace": c["trace"],
                 "register": c["register"], "occurred_at": c["occurred_at"],
+                "solitary": bool(c.get("solitary")),
                 "activation": round(float(c["activation"]), 4)}
         if c.get("mood_similarity") is not None:
             item["mood_similarity"] = round(c["mood_similarity"], 4)
@@ -204,5 +207,10 @@ def render_context(facts: list[dict], associations: list[dict]) -> str:
             # audit #5). The tag is explicitly the reader's, never claimed
             # as the agent's own feeling.
             tag = f" [the reader felt this moment as: {a['register']}]" if a.get("register") else ""
-            lines.append(f"- impression{tag}: {a['trace']}")
+            # Reality label (the Rexie lesson): a memory born alone is
+            # surfaced AS born alone, so imagined company can never wear
+            # the authority of shared history.
+            solo = (" [solitary — this was your own time; any conversation "
+                    "in it was imagined, not lived]") if a.get("solitary") else ""
+            lines.append(f"- impression{solo}{tag}: {a['trace']}")
     return "\n".join(lines)

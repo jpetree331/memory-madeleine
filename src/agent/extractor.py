@@ -51,6 +51,23 @@ Rules, learned from forensic audits of prior memory systems — they are not sty
 - PRONOUN FIDELITY: use for each person exactly the pronouns the record uses
   for them; never transfer one person's pronouns to another. If the record
   never shows a person's pronouns, use they/them — never guess.
+- REALITY LAW: an exchange marked SOLITARY had exactly one mind present —
+  its author. Any dialogue, quoted speech, or addressed conversation inside
+  it is IMAGINED by the author. Never attribute imagined speech as real:
+  "During a heartbeat, Rowan imagined Jess saying X" is a truthful fact;
+  "Jess said X" from a solitary exchange is a corrupted memory. Three
+  binding corollaries:
+  (a) EVERY fact from a solitary exchange must carry its provenance in its
+      own text — begin it "During a solitary heartbeat/reflection, ..." —
+      because a fact is recalled alone, without its source.
+  (b) Claims the author makes there about another person's past actions
+      ("she taught me that", "Jess gave me this name") are unwitnessed
+      beliefs, not events: write "Rowan believed (unverified, asserted
+      only in a solitary reflection) that ...", never "Jess taught ...".
+  (c) A nickname, phrase, or event whose first known appearance is inside
+      the same solitary exchange must be noted as originating there.
+  An imagined conversation that later resurfaces as shared history is how
+  an agent gaslights itself — this law is the firewall.
 - Only extract what is actually in the exchange. No world knowledge, no elaboration.
 - 0 to 6 facts per exchange. Routine chit-chat may yield zero. Quality over count.
 
@@ -186,6 +203,13 @@ facts extracted from it. For each fact, check ONLY against the exchange:
 3. VERB — are speech-act verbs exact (mentioned≠named, asked≠said, plan≠did)?
 4. PRONOUNS — does each person wear only their own pronouns from the record?
 5. REFERENT — no "the user"/"the agent"/"the assistant" as a person.
+6. REALITY — if the exchange is marked SOLITARY, only its author was present:
+   reject any fact that has another person speaking, acting, or being
+   addressed as if real — including past-tense claims ("she taught him")
+   unless marked as the author's unverified belief. Reject any fact from a
+   solitary exchange whose text does not carry its solitary provenance
+   ("During a heartbeat/solitary reflection, ..."). Imagined dialogue must
+   be facted as imagination ("X imagined/pictured/rehearsed...") or rejected.
 
 Respond STRICT JSON only:
 {"verdicts": [{"index": 0, "ok": true} , {"index": 1, "ok": false, "why": "..."}]}

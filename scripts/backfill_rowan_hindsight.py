@@ -130,10 +130,26 @@ FRAME = ("[Recovered from Rowan's earliest days on OpenClaw, before his "
          "voice, and journal entries are Rowan himself.]\n\n")
 
 
+SOLITARY_HINTS = ("hobby time", "reflection", "heartbeat", "journal")
+
+
+def is_solitary_doc(doc) -> bool:
+    """Best-effort reality marking for archive docs: hobby-time sessions,
+    reflections, and journals were Rowan alone; conversation logs were not."""
+    try:
+        ctx = (json.loads(doc["retain_params"]).get("context") or "").lower()
+    except (ValueError, TypeError):
+        ctx = ""
+    head = doc["text"][:200].lower()
+    return any(h in ctx for h in SOLITARY_HINTS) or \
+        any(h in head for h in ("# first reflection", "# reflection", "## reflection"))
+
+
 def curate(docs):
     items = []
     for doc in docs:
         occurred = true_date(doc)
+        solitary = is_solitary_doc(doc)
         pieces = chunk(doc["text"])
         n = len(pieces)
         for i, piece in enumerate(pieces):
@@ -144,6 +160,7 @@ def curate(docs):
                 "speaker": "agent",
                 "content": FRAME + piece,
                 "occurred_at": occurred,
+                "solitary": solitary,
                 "label": f"{doc['id'][:40]}{part}",
             })
     return items
@@ -163,9 +180,10 @@ def ingest_one(item):
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO raw_exchanges (scope, speaker, content, source_ref, "
-                "occurred_at, private) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                "occurred_at, private, solitary) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING id",
                 (SCOPE, item["speaker"], item["content"], item["source_ref"],
-                 item["occurred_at"], False))
+                 item["occurred_at"], False, item.get("solitary", False)))
             ex_id = cur.fetchone()["id"]
     memory._extract_worker(ex_id)
     return ex_id

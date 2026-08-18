@@ -87,6 +87,11 @@ ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS extracted_at TIMESTAMPTZ;
 -- future public-facing guardrails can filter derived facts/episodes via
 -- provenance joins. Signal preserved, policy deferred.
 ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT FALSE;
+-- Reality marker (the Rexie lesson, 2026-08-18): TRUE = only the author's
+-- mind was present (heartbeat, cron, solo reflection). Downstream, imagined
+-- dialogue in a solitary exchange must never enter memory as another
+-- person's speech, and recall labels these as the agent's own time.
+ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS solitary BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS episode_revisions (   -- reconsolidation audit trail
   id SERIAL PRIMARY KEY,                          -- (Observatory addendum)
