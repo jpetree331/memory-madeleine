@@ -88,6 +88,22 @@ const StrengthBar = ({ strength }) => (
   </div>
 )
 
+const PAGE_SIZE = 50
+
+const Pager = ({ page, setPage, total }) => {
+  const pages = Math.max(1, Math.ceil((total || 0) / PAGE_SIZE))
+  if (pages <= 1) return null
+  const btn = 'px-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900 ' +
+    'text-slate-400 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-default'
+  return (
+    <div className="flex items-center gap-3 mt-4 text-sm">
+      <button className={btn} disabled={page <= 1} onClick={() => setPage(page - 1)}>← prev</button>
+      <span className="text-xs text-slate-500">page {page} of {pages}</span>
+      <button className={btn} disabled={page >= pages} onClick={() => setPage(page + 1)}>next →</button>
+    </div>
+  )
+}
+
 const SalienceDots = ({ salience }) => (
   <span className="tracking-tighter text-amber-300/90" title={`salience ${salience?.toFixed(2)}`}>
     {'●'.repeat(Math.round((salience || 0) * 5)).padEnd(5, '○')}
@@ -211,14 +227,17 @@ function Episodes({ scope }) {
   const [data, setData] = useState({ episodes: [], total: 0 })
   const [q, setQ] = useState('')
   const [sort, setSort] = useState('created_at')
+  const [page, setPage] = useState(1)
   const [open, setOpen] = useState(null)
+  useEffect(() => { setPage(1) }, [q, sort, scope])
   useEffect(() => {
     const t = setTimeout(() =>
-      fetch(`${API}/episodes?sort=${sort}${q ? `&q=${encodeURIComponent(q)}` : ''}` +
+      fetch(`${API}/episodes?sort=${sort}&page=${page}&page_size=${PAGE_SIZE}` +
+            `${q ? `&q=${encodeURIComponent(q)}` : ''}` +
             (scope ? `&scope=${encodeURIComponent(scope)}` : ''))
         .then(r => r.json()).then(setData), 200)
     return () => clearTimeout(t)
-  }, [q, sort, scope])
+  }, [q, sort, scope, page])
   return (
     <div>
       <div className="flex gap-3 mb-4">
@@ -254,6 +273,7 @@ function Episodes({ scope }) {
           <p className="text-slate-600 text-sm">No episodes yet — memory is waiting to live a little.</p>
         )}
       </div>
+      <Pager page={page} setPage={setPage} total={data.total} />
       {open && <Dossier id={open} onClose={() => setOpen(null)} />}
     </div>
   )
@@ -264,6 +284,8 @@ function Facts({ scope }) {
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
   const [sort, setSort] = useState('created_at')
+  const [page, setPage] = useState(1)
+  useEffect(() => { setPage(1) }, [q, scope, status, sort])
   useEffect(() => {
     const t = setTimeout(() => {
       const p = new URLSearchParams()
@@ -271,10 +293,11 @@ function Facts({ scope }) {
       if (q.trim()) p.set('q', q.trim())
       if (status) p.set('status', status)
       if (sort) p.set('sort', sort)
+      p.set('page', page); p.set('page_size', PAGE_SIZE)
       fetch(`${API}/facts?${p}`).then(r => r.json()).then(setData)
     }, 300)
     return () => clearTimeout(t)
-  }, [q, scope, status, sort])
+  }, [q, scope, status, sort, page])
   return (
     <div>
       <div className="flex gap-3 mb-4">
@@ -324,6 +347,7 @@ function Facts({ scope }) {
           <p className="text-slate-600 text-sm">No facts here yet — truth accumulates one exchange at a time.</p>
         )}
       </div>
+      {data.mode !== 'semantic' && <Pager page={page} setPage={setPage} total={data.total} />}
     </div>
   )
 }
@@ -577,17 +601,20 @@ function FlavorCensus({ scope, onPick }) {
 function Entities({ scope }) {
   const [ents, setEnts] = useState([])
   const [q, setQ] = useState('')
+  const [limit, setLimit] = useState(200)
   const [open, setOpen] = useState(null)
+  useEffect(() => { setLimit(200) }, [scope, q])
   useEffect(() => {
     const t = setTimeout(() => {
       const p = new URLSearchParams()
       if (scope) p.set('scope', scope)
       if (q.trim()) p.set('q', q.trim())
+      p.set('limit', limit)
       fetch(`${API}/entities?${p}`).then(r => r.json())
         .then(d => setEnts(d.entities || [])).catch(() => setEnts([]))
     }, 250)
     return () => clearTimeout(t)
-  }, [scope, q])
+  }, [scope, q, limit])
   const kindColor = { person: 'text-violet-300', ai: 'text-sky-300',
     agent: 'text-sky-300', project: 'text-emerald-300', place: 'text-amber-300',
     concept: 'text-slate-300' }
@@ -623,6 +650,12 @@ function Entities({ scope }) {
         ))}
       </div>
       {ents.length === 0 && <p className="text-slate-600 text-sm mt-4">No entities surfaced yet.</p>}
+      {ents.length >= limit && (
+        <button onClick={() => setLimit(l => l + 200)}
+          className="mt-4 px-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:bg-slate-800">
+          load more ↓
+        </button>
+      )}
       {open && <EntityPanel id={open} scope={scope} onClose={() => setOpen(null)} />}
     </div>
   )
@@ -872,6 +905,37 @@ function Legend() {
           from display, held dark). The gate is the single door: nothing enters episodic memory without
           passing it, backfills included.
         </p>
+      </LegendSection>
+
+      <LegendSection title="Glossary">
+        <p><span className="text-slate-200">Raw exchange</span> — one original message or turn, stored
+          verbatim in the replay store. The ground truth everything else is derived from; never edited,
+          never retrieved from directly.</p>
+        <p><span className="text-slate-200">Fact</span> — one atomic statement extracted from an
+          exchange, verified at the door against the raw text before it may enter.</p>
+        <p><span className="text-slate-200">Episode / trace</span> — a remembered scene; the trace is
+          its narrative text. Episodes decay, strengthen, and can be rewritten by reconsolidation
+          (with every prior wording kept).</p>
+        <p><span className="text-slate-200">Register</span> — the episode's mood in one line (cheap
+          flavor). <span className="text-slate-200">Flavor</span> — the deep version: a vector measured
+          from a reader model's internal state, not written in words at all.</p>
+        <p><span className="text-slate-200">Entity</span> — a <em>node</em> in the association graph:
+          a person, AI, project, place, or concept that memory touches. Entities are the graph's nouns.</p>
+        <p><span className="text-slate-200">Edge</span> — a <em>connection</em> in that graph, with a
+          weight that grows on repetition: episode–entity and fact–entity edges record what touches
+          what ("this moment involved Hindsight"), and episode–episode co-retrieval edges grow between
+          memories recalled together. Edges are how remembering one thing surfaces another.</p>
+        <p><span className="text-slate-200">Spreading activation</span> — recall's second step: energy
+          flows outward from the directly-matched memories along edges, fading with each hop, so a
+          question about a song can surface the car you heard it in.</p>
+        <p><span className="text-slate-200">Consolidation</span> — the nightly pass: decay, trace
+          reconsolidation, pattern promotion (repeated evidence becomes derived facts), co-retrieval
+          edge growth, flavor capture, and atlas projection.</p>
+        <p><span className="text-slate-200">Quarantine</span> — the gate's holding cell for content
+          that tried to smuggle instructions to a future reader. Kept dark, never retrieved, awaiting
+          human review.</p>
+        <p><span className="text-slate-200">Scope</span> — one agent's whole memory. Scopes never mix:
+          each agent recalls only its own life.</p>
       </LegendSection>
 
       <p className="text-xs text-slate-600 mt-10">
