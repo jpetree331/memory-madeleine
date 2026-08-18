@@ -44,6 +44,23 @@ POOL = int(os.environ.get("ROWAN_POOL", "6"))
 TRIGGER_DISPLAYS = {"heartbeat", "cron", "reminder-check"}
 CRON_NAME = re.compile(r"^\[cron:\S+\s+([^\]]+)\]")
 THINK = re.compile(r"<think(?:ing)?>(.*?)</think(?:ing)?>", re.S)
+# Early-era trigger boxes carry no role_display (MEASURED 2026-08-18: 93 rows,
+# rd=None) — the ╔══╗ [SILENT MODE] frame with a TRIGGER: line. Detect by body.
+BOX_MARKERS = ("[SILENT MODE]", "TRIGGER: Scheduled heartbeat", "TRIGGER: Cron")
+TRIGGER_LINE = re.compile(r"TRIGGER:\s*(.+)", re.I)
+
+
+def is_trigger_box(content: str) -> tuple[str, str | None] | None:
+    """('heartbeat'|'cron', session_name) when the row is a system trigger
+    box rather than a human message; None otherwise."""
+    if not (content.startswith("╔") or any(m in content for m in BOX_MARKERS)):
+        return None
+    m = TRIGGER_LINE.search(content)
+    what = (m.group(1).strip() if m else "").lower()
+    if "heartbeat" in what or not what:
+        return ("heartbeat", None)
+    session = m.group(1).strip() if m else None
+    return ("cron", session)
 
 rowan_dsn = ""
 for line in Path(r"E:\git\LANGGRAPH\.env").read_text(encoding="utf-8").splitlines():
@@ -92,6 +109,11 @@ def curate(rows):
                     session = m.group(1).strip()
                 pending_trigger = ("cron", session) if display.lower() == "cron" \
                     else ("heartbeat", None)
+                stats["skip_trigger"] += 1
+                continue
+            box = is_trigger_box(content)
+            if box:
+                pending_trigger = box
                 stats["skip_trigger"] += 1
                 continue
             if len(content) < 2:
