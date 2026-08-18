@@ -721,7 +721,167 @@ function GateFeed({ scope }) {
   )
 }
 
-const PAGES = { Overview, Episodes, Facts, Entities, Atlas, Playground, 'Gate Feed': GateFeed }
+// ── Legend ───────────────────────────────────────────────────────────────
+// The observatory's own manual: what each instrument shows and how to read
+// the visual language. Static by design — if the legend needs an API call,
+// the UI has failed at being legible.
+function LegendSection({ title, children }) {
+  return (
+    <section className="mb-8">
+      <h2 className="text-sky-200 text-base mb-2">{title}</h2>
+      <div className="text-sm text-slate-400 leading-relaxed space-y-2">{children}</div>
+    </section>
+  )
+}
+
+function Legend() {
+  return (
+    <div className="max-w-3xl">
+      <p className="text-sm text-slate-400 leading-relaxed mb-8">
+        Madeleine is a three-store memory for AI agents: <span className="text-slate-200">facts</span> (what
+        is true), <span className="text-slate-200">episodes</span> (what it was like), and{' '}
+        <span className="text-slate-200">flavor</span> (what it felt like, measured rather than described).
+        The Observatory is a verification instrument, not an admin panel — every view is read-only except
+        pinning and quarantine review. Memory is edited by living, not by clicking.
+      </p>
+
+      <LegendSection title="The visual language (everywhere)">
+        <p>
+          <span className="text-amber-300/90 tracking-tighter">●●●○○</span>{' '}
+          <span className="text-slate-200">Salience dots (orange)</span> — how much this moment mattered
+          when it happened, 0 to 5. The gate scores every exchange; only salient ones become episodes.
+        </p>
+        <p>
+          <span className="inline-block w-16 h-2 bg-slate-800 rounded align-middle overflow-hidden"><span className="block h-full w-2/3 bg-emerald-400 rounded" /></span>{' '}
+          <span className="text-slate-200">Strength bar (green)</span> — how alive the memory is
+          <em> now</em>. Recall feeds it; neglect decays it (green = strong, amber = fading,
+          gray = faint). A memory can matter greatly and still fade if never revisited — and a small
+          moment recalled often grows strong.
+        </p>
+        <p>
+          <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: 'hsl(200 45% 18%)', color: 'hsl(200 70% 75%)' }}>register chip</span>{' '}
+          — the mood of the moment in one line, written like a stage direction. Each register text gets a
+          stable color from its own wording, so the same mood always wears the same hue, in lists and in
+          the Atlas alike.
+        </p>
+        <p>
+          <span className="text-slate-200">Names are lit by who they are:</span>{' '}
+          <span className="text-rose-300 font-medium">the human</span> in rose,{' '}
+          <span className="text-sky-300 font-medium">the agent whose memory this is</span> in sky,{' '}
+          <span className="text-violet-300 font-medium">other people</span> in violet. This comes live
+          from the entity roster — nothing is hardcoded.
+        </p>
+        <p>
+          <span className="text-slate-200">Date chips</span> show when the remembered moment{' '}
+          <em>happened</em> (its true event time), not when it was written down. A trailing{' '}
+          <span className="text-slate-300">*</span> means no event time is known, so the write time is
+          shown instead.
+        </p>
+      </LegendSection>
+
+      <LegendSection title="Overview">
+        <p>
+          The sky at a glance: active facts (with superseded ones kept, never deleted), episode strength
+          bands, the association graph size, quarantine count, and raw exchanges — the replay store that
+          preserves every original text verbatim but is never retrieved from directly. Below, the last
+          nightly consolidation: what decayed, what was reconsolidated, what patterns were promoted.
+        </p>
+      </LegendSection>
+
+      <LegendSection title="Episodes">
+        <p>
+          Episodic memory — moments, not statements. Each card is one remembered scene: a{' '}
+          <span className="text-slate-200">trace</span> (the memory as narrative), its register, salience,
+          and current strength. <span className="text-slate-200">📌 pinned</span> episodes are exempt from
+          decay. <span className="text-rose-400">QUARANTINED</span> episodes were flagged by the gate as
+          attempted manipulation — held dark, excluded from retrieval, awaiting human review.
+        </p>
+        <p>
+          Click any episode for its <span className="text-slate-200">dossier</span>: the full trace, the
+          entities it touches, the facts born from the same exchange, and its revision history — every
+          time consolidation rewrote the trace, the previous wording is kept. Memory here is allowed to
+          change, but never allowed to lie about having changed.
+        </p>
+      </LegendSection>
+
+      <LegendSection title="Facts">
+        <p>
+          Semantic memory — atomic statements, third person, each one standing alone. Typing in the
+          search box switches to live vector search (cosine similarity over embeddings — the raw RAG
+          view). Facts are never edited or deleted: a corrected fact is{' '}
+          <span className="line-through text-slate-500">superseded</span> (struck through, pointing at its
+          replacement), and <span className="text-violet-400">derived</span> facts are patterns the
+          nightly consolidation promoted from repeated evidence.
+        </p>
+      </LegendSection>
+
+      <LegendSection title="Entities">
+        <p>
+          Everyone and everything memory touches: people, AIs, projects, places, concepts — with how
+          often each is mentioned and when it was first and last seen (true event dates). Click one to
+          see every episode and fact that touches it. This roster is also what powers the name coloring.
+        </p>
+      </LegendSection>
+
+      <LegendSection title="Atlas">
+        <p>
+          The memory landscape, projected to two dimensions (PCA). Every dot is an episode:{' '}
+          <span className="text-slate-200">color</span> = its register's hue,{' '}
+          <span className="text-slate-200">size</span> = salience,{' '}
+          <span className="text-slate-200">fade</span> = strength. Near dots are similar; distances are
+          meaningful, but the axes themselves are not labeled quantities — they are the two directions
+          along which this particular memory varies most.
+        </p>
+        <p>
+          <span className="text-slate-200">register space</span> maps the <em>descriptions</em> of moods:
+          each register line is embedded as language, so dots sit together when their stage directions
+          mean similar things. <span className="text-slate-200">flavor space</span> maps the{' '}
+          <em>measurements</em>: a reader model's internal state while reading the raw exchange — not
+          what the mood was called, but what it did to a mind reading it. Same sky, two instruments.
+        </p>
+        <p>
+          <span className="text-slate-200">links</span> overlays the association web:{' '}
+          <span className="text-emerald-400">green lines</span> are co-retrieval bonds (memories that
+          have been recalled together grow direct connections — these accumulate from lived use), and{' '}
+          <span className="text-amber-400">amber lines</span> connect episodes sharing a rare entity.
+          Common entities are excluded on purpose: the humans touch everything, and their links would
+          white out the sky.
+        </p>
+        <p>
+          <span className="text-slate-200">flavors</span> is the census: every register tag counted, with
+          average salience and first/last seen. Deep flavor is a continuous field — a gradient, not a
+          checklist — so these tags are its named shadows. Clicking one lights those episodes up on the
+          map.
+        </p>
+      </LegendSection>
+
+      <LegendSection title="Playground">
+        <p>
+          Recall exactly as the agent experiences it: type what the agent might be thinking about and see
+          what memory surfaces — facts, episodes, and impressions, with spreading activation walking the
+          association graph. What you see here is what the agent gets.
+        </p>
+      </LegendSection>
+
+      <LegendSection title="Gate Feed">
+        <p>
+          The write-gate's live decisions, one row per retained exchange:{' '}
+          <span className="text-emerald-300">episode</span> (salient — became a memory),{' '}
+          <span className="text-slate-400">facts_only</span> (worth keeping, not worth reliving),{' '}
+          <span className="text-rose-300">quarantined</span> (attempted manipulation — content withheld
+          from display, held dark). The gate is the single door: nothing enters episodic memory without
+          passing it, backfills included.
+        </p>
+      </LegendSection>
+
+      <p className="text-xs text-slate-600 mt-10">
+        Scope (top-left) selects whose memory you are observing — one scope per agent, fully isolated.
+      </p>
+    </div>
+  )
+}
+
+const PAGES = { Overview, Episodes, Facts, Entities, Atlas, Playground, 'Gate Feed': GateFeed, Legend }
 
 export default function App() {
   const [page, setPage] = useState('Overview')
