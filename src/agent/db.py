@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS edges (
 
 -- extraction queue marker: NULL = queued/unprocessed (Sprint 1)
 ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS extracted_at TIMESTAMPTZ;
+-- source-side privacy marker (Rowan ingest): retrieval ignores it today;
+-- future public-facing guardrails can filter derived facts/episodes via
+-- provenance joins. Signal preserved, policy deferred.
+ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS episode_revisions (   -- reconsolidation audit trail
   id SERIAL PRIMARY KEY,                          -- (Observatory addendum)
