@@ -110,6 +110,76 @@ const SalienceDots = ({ salience }) => (
   </span>
 )
 
+// GitHub-style activity heatmap: exchanges per day, deeper blue = fuller day.
+// Dates are true event dates, so a backfilled life paints its real history.
+function ActivityMap({ scope }) {
+  const [days, setDays] = useState([])
+  useEffect(() => {
+    fetch(`${API}/activity${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`)
+      .then(r => r.json()).then(d => setDays(d.days || [])).catch(() => setDays([]))
+  }, [scope])
+  if (!days.length) return null
+  const byDate = Object.fromEntries(days.map(x => [x.d, x.n]))
+  const max = Math.max(...days.map(x => x.n))
+  const total = days.reduce((s, x) => s + x.n, 0)
+  const peak = days.reduce((a, b) => (b.n > a.n ? b : a))
+  const iso = (dt) => dt.toISOString().slice(0, 10)
+  const start = new Date(days[0].d + 'T00:00:00Z')
+  start.setUTCDate(start.getUTCDate() - start.getUTCDay())   // back to Sunday
+  const end = new Date()
+  const weeks = []
+  const cursor = new Date(start)
+  while (cursor <= end) {
+    const col = []
+    for (let i = 0; i < 7; i++) {
+      col.push(iso(cursor))
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
+    }
+    weeks.push(col)
+  }
+  const monthLabel = (col) => {
+    const first = new Date(col[0] + 'T00:00:00Z')
+    return first.getUTCDate() <= 7
+      ? first.toLocaleString('en', { month: 'short', timeZone: 'UTC' }) : ''
+  }
+  const shade = (n) => {
+    if (!n) return 'rgba(148,163,184,0.07)'
+    const t = Math.sqrt(n / max)                       // sqrt: mid days stay visible
+    return `rgba(56,189,248,${0.15 + 0.8 * t})`
+  }
+  return (
+    <div className="mt-6 bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500 mb-3">
+        <span><span className="text-slate-300">{total.toLocaleString()}</span> exchanges</span>
+        <span><span className="text-slate-300">{days.length}</span> active days</span>
+        <span>fullest day <span className="text-slate-300">{peak.d}</span> ({peak.n})</span>
+      </div>
+      <div className="overflow-x-auto">
+        <div className="inline-flex gap-[3px]">
+          {weeks.map((col, wi) => (
+            <div key={wi} className="flex flex-col gap-[3px]">
+              <div className="h-3 text-[9px] text-slate-600 leading-3">{monthLabel(col)}</div>
+              {col.map(d => (
+                <div key={d} title={`${d} — ${byDate[d] || 0} exchanges`}
+                  className="w-3 h-3 rounded-[3px]"
+                  style={{ background: shade(byDate[d] || 0) }} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 mt-2 text-[10px] text-slate-600">
+        quieter
+        {[0, 0.15, 0.4, 0.7, 1].map(t => (
+          <span key={t} className="w-3 h-3 rounded-[3px] inline-block"
+            style={{ background: t === 0 ? 'rgba(148,163,184,0.07)' : `rgba(56,189,248,${0.15 + 0.8 * t})` }} />
+        ))}
+        fuller
+      </div>
+    </div>
+  )
+}
+
 function Overview({ scope }) {
   const [stats, setStats] = useState(null)
   useEffect(() => {
@@ -137,6 +207,7 @@ function Overview({ scope }) {
           </div>
         ))}
       </div>
+      <ActivityMap scope={scope} />
       {lc && (
         <div className="mt-6 bg-slate-900/70 border border-slate-800 rounded-xl p-4 text-sm">
           <div className="text-slate-400 mb-2">Last consolidation — {lc.started?.slice(0, 16)}</div>
@@ -816,8 +887,10 @@ function Legend() {
         <p>
           The sky at a glance: active facts (with superseded ones kept, never deleted), episode strength
           bands, the association graph size, quarantine count, and raw exchanges — the replay store that
-          preserves every original text verbatim but is never retrieved from directly. Below, the last
-          nightly consolidation: what decayed, what was reconsolidated, what patterns were promoted.
+          preserves every original text verbatim but is never retrieved from directly. The activity
+          heatmap paints exchanges per day on true event dates (deeper blue = fuller day), so a
+          backfilled life shows its real history, not its import date. Below, the last nightly
+          consolidation: what decayed, what was reconsolidated, what patterns were promoted.
         </p>
       </LegendSection>
 

@@ -488,6 +488,22 @@ def registers_census(scope: str | None = None, q: str | None = None, limit: int 
     return {"registers": rows, "distinct": meta["d"], "episodes": meta["t"]}
 
 
+@app.get("/api/activity")
+def activity(scope: str | None = None):
+    """Exchanges per day (true event dates) — the Overview heatmap. A life,
+    seen from above."""
+    where = "WHERE scope=%s" if scope else ""
+    params = (scope,) if scope else ()
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT DATE(COALESCE(occurred_at, created_at)) AS d, "
+                f"COUNT(*) AS n FROM raw_exchanges {where} GROUP BY d ORDER BY d",
+                params)
+            days = [{"d": r["d"].isoformat(), "n": r["n"]} for r in cur.fetchall()]
+    return {"days": days}
+
+
 @app.get("/api/gate/feed")
 def gate_feed(after_id: int = 0, limit: int = 50):
     """Live feed (polled). Quarantined rows show decision, never content."""
