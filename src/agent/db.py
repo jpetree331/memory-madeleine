@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS episode_revisions (   -- reconsolidation audit trail
 CREATE INDEX IF NOT EXISTS idx_revisions_ep ON episode_revisions (episode_id);
 
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE facts ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ;  -- true event time, from the source exchange
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS proj_x REAL;      -- flavor projection, nightly
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS proj_y REAL;
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS reg_proj_x REAL;  -- register-emb projection

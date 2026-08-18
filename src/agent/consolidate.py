@@ -253,6 +253,24 @@ def run(now: datetime | None = None) -> dict:
         summary["errors"].append(f"reconsolidation: {e}")
         logger.error("reconsolidation pass failed: %s", e)
 
+    # ── 4a½. Fact dating catch-up: facts written before occurred_at existed
+    # (or by a process running older code) inherit their exchange's true
+    # event time. Idempotent, cheap, safe to run every night.
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE facts f SET occurred_at = r.occurred_at "
+                    "FROM raw_exchanges r "
+                    "WHERE f.occurred_at IS NULL AND r.occurred_at IS NOT NULL "
+                    "AND f.source_ref = 'raw:' || r.id")
+                if cur.rowcount:
+                    logger.info("dated %d facts from their source exchanges",
+                                cur.rowcount)
+    except Exception as e:
+        summary["errors"].append(f"fact dating: {e}")
+        logger.error("fact dating pass failed: %s", e)
+
     # ── 4b. Deep flavor capture (Sprint 5.1) — nightly, VRAM-guarded ─────────
     try:
         from . import reader

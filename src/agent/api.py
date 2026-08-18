@@ -280,9 +280,11 @@ def quarantine_review(episode_id: int, req: QuarantineReq):
 @app.get("/api/facts")
 def facts_list(scope: str | None = None, q: str | None = None,
                status: str | None = None, kind: str | None = None,
-               page: int = 1, page_size: int = 50):
+               sort: str = "created_at", page: int = 1, page_size: int = 50):
     """The semantic store, visible. With q: live pgvector cosine search —
-    the raw RAG view. Without: paged listing, newest first."""
+    the raw RAG view. Without: paged listing, newest first (or by true
+    event date with sort=occurred_at)."""
+    sort_col = sort if sort in ("created_at", "occurred_at") else "created_at"
     clauses, params = [], []
     if scope:
         clauses.append("scope=%s"); params.append(scope)
@@ -304,7 +306,7 @@ def facts_list(scope: str | None = None, q: str | None = None,
             with conn.cursor() as cur:
                 cur.execute(
                     f"SELECT id, scope, content, kind, status, superseded_by, "
-                    f"source_episode_id, source_ref, created_at, "
+                    f"source_episode_id, source_ref, created_at, occurred_at, "
                     f"1 - (embedding <=> %s::vector) AS similarity FROM facts "
                     f"{where + (' AND' if where else 'WHERE')} embedding IS NOT NULL "
                     f"ORDER BY embedding <=> %s::vector LIMIT %s",
@@ -317,8 +319,9 @@ def facts_list(scope: str | None = None, q: str | None = None,
             total = cur.fetchone()["c"]
             cur.execute(
                 f"SELECT id, scope, content, kind, status, superseded_by, "
-                f"source_episode_id, source_ref, created_at FROM facts {where} "
-                f"ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                f"source_episode_id, source_ref, created_at, occurred_at "
+                f"FROM facts {where} "
+                f"ORDER BY {sort_col} DESC NULLS LAST LIMIT %s OFFSET %s",
                 params + [page_size, (page - 1) * page_size])
             rows = [dict(r) for r in cur.fetchall()]
     return {"total": total, "facts": rows, "mode": "list"}

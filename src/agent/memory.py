@@ -138,8 +138,10 @@ def _extract_worker(exchange_id: int) -> None:
                             continue
                     cur.execute(
                         "INSERT INTO facts (scope, content, embedding, source_ref, "
-                        "source_episode_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                        (row["scope"], text, vec, f"raw:{exchange_id}", episode_id),
+                        "source_episode_id, occurred_at) VALUES (%s, %s, %s, %s, %s, %s) "
+                        "RETURNING id",
+                        (row["scope"], text, vec, f"raw:{exchange_id}", episode_id,
+                         row["occurred_at"]),
                     )
                     new_ids.append(cur.fetchone()["id"])
                 # Supersede = status flip + pointer; content is never touched

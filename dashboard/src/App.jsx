@@ -13,11 +13,23 @@ const hue = (s) => {
 }
 const RegisterChip = ({ register }) =>
   register ? (
-    <span className="px-2 py-0.5 rounded-full text-xs whitespace-nowrap"
+    <span className="px-2 py-0.5 rounded-full text-xs whitespace-nowrap max-w-full overflow-hidden text-ellipsis"
+      title={register}
       style={{ background: `hsl(${hue(register)} 45% 18%)`, color: `hsl(${hue(register)} 70% 75%)` }}>
       {register}
     </span>
   ) : <span className="text-slate-600 text-xs">—</span>
+
+// Compact date chip: true event time when known, else write time
+const WhenChip = ({ occurred, created }) => {
+  const t = occurred || created
+  return t ? (
+    <span className="text-xs text-slate-500 whitespace-nowrap"
+      title={occurred ? `occurred ${occurred}` : `retained ${created} (no event date)`}>
+      {t.slice(0, 10)}{!occurred && '*'}
+    </span>
+  ) : null
+}
 
 const StrengthBar = ({ strength }) => (
   <div className="w-24 h-2 bg-slate-800 rounded overflow-hidden" title={`strength ${strength?.toFixed(2)}`}>
@@ -98,7 +110,7 @@ function Dossier({ id, onClose }) {
             <button className="text-xs text-slate-500 px-2" onClick={onClose}>✕</button>
           </div>
         </div>
-        <div className="flex items-center gap-3 mb-3 text-sm">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-3 text-sm">
           <RegisterChip register={ep.register} />
           <SalienceDots salience={ep.salience} />
           <StrengthBar strength={ep.strength} />
@@ -176,13 +188,16 @@ function Episodes({ scope }) {
           <div key={ep.id} onClick={() => setOpen(ep.id)}
             className={`bg-slate-900/60 border rounded-xl px-4 py-3 cursor-pointer hover:border-sky-800
               ${ep.quarantined ? 'border-rose-900/60 opacity-60' : 'border-slate-800'}`}>
-            <div className="flex items-center gap-3 mb-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-1">
               <RegisterChip register={ep.register} />
               <SalienceDots salience={ep.salience} />
               <StrengthBar strength={ep.strength} />
               {ep.pinned && <span title="pinned">📌</span>}
               {ep.quarantined && <span className="text-rose-400 text-xs">QUARANTINED</span>}
-              <span className="text-xs text-slate-600 ml-auto">recalls {ep.recall_count}</span>
+              <span className="text-xs text-slate-600 ml-auto flex items-center gap-3">
+                <WhenChip occurred={ep.occurred_at} created={ep.created_at} />
+                <span>recalls {ep.recall_count}</span>
+              </span>
             </div>
             <p className="text-sm text-slate-300 line-clamp-2">{ep.trace}</p>
           </div>
@@ -200,16 +215,18 @@ function Facts({ scope }) {
   const [data, setData] = useState({ facts: [], total: 0, mode: 'list' })
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
+  const [sort, setSort] = useState('created_at')
   useEffect(() => {
     const t = setTimeout(() => {
       const p = new URLSearchParams()
       if (scope) p.set('scope', scope)
       if (q.trim()) p.set('q', q.trim())
       if (status) p.set('status', status)
+      if (sort) p.set('sort', sort)
       fetch(`${API}/facts?${p}`).then(r => r.json()).then(setData)
     }, 300)
     return () => clearTimeout(t)
-  }, [q, scope, status])
+  }, [q, scope, status, sort])
   return (
     <div>
       <div className="flex gap-3 mb-4">
@@ -222,8 +239,14 @@ function Facts({ scope }) {
           <option value="active">active</option>
           <option value="superseded">superseded</option>
         </select>
+        <select value={sort} onChange={e => setSort(e.target.value)}
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm">
+          <option value="created_at">newest written</option>
+          <option value="occurred_at">by event date</option>
+        </select>
         <span className="text-slate-500 text-sm self-center">
-          {data.total} facts · {data.mode === 'semantic' ? 'ranked by cosine' : 'newest first'}
+          {data.total} facts · {data.mode === 'semantic' ? 'ranked by cosine'
+            : sort === 'occurred_at' ? 'by event date' : 'newest first'}
         </span>
       </div>
       <div className="space-y-1.5">
@@ -235,6 +258,12 @@ function Facts({ scope }) {
               {f.content}
             </span>
             <span className="text-xs text-slate-600 ml-2">
+              {(f.occurred_at || f.created_at) && (
+                <span className="text-slate-500 mr-2"
+                  title={f.occurred_at ? `occurred ${f.occurred_at}` : `retained ${f.created_at} (no event date)`}>
+                  {(f.occurred_at || f.created_at).slice(0, 10)}{!f.occurred_at && '*'}
+                </span>
+              )}
               {f.kind === 'derived' && <span className="text-violet-400 mr-2">derived</span>}
               {f.status === 'superseded' && <span className="mr-2">→ #{f.superseded_by}</span>}
               {f.similarity != null && <span className="text-emerald-500 mr-2">cos {f.similarity.toFixed(3)}</span>}
@@ -373,15 +402,25 @@ function Atlas({ scope }) {
             onMouseEnter={() => setHover(p)} onMouseLeave={() => setHover(null)}
             onClick={() => setOpen(p.id)} />
         ))}
-        {hover && (
-          <g>
-            <rect x={20} y={455} width={720} height={38} rx={8}
-              fill="#0f172acc" stroke="#1e293b" />
-            <text x={32} y={478} fill="#cbd5e1" fontSize="12">
-              #{hover.id} · {(hover.register || '').slice(0, 90)}
-            </text>
-          </g>
-        )}
+        {hover && (() => {
+          const label = `#${hover.id} · ${hover.register || ''}`
+          const line1 = label.slice(0, 96)
+          const line2 = label.slice(96, 192)
+          const twoLines = line2.length > 0
+          return (
+            <g>
+              <rect x={20} y={twoLines ? 438 : 455} width={720}
+                height={twoLines ? 55 : 38} rx={8}
+                fill="#0f172acc" stroke="#1e293b" />
+              <text x={32} y={twoLines ? 460 : 478} fill="#cbd5e1" fontSize="12">
+                {line1}
+              </text>
+              {twoLines && (
+                <text x={32} y={478} fill="#cbd5e1" fontSize="12">{line2}</text>
+              )}
+            </g>
+          )
+        })()}
       </svg>
       {open && <Dossier id={open} onClose={() => setOpen(null)} />}
     </div>
