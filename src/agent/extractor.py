@@ -94,12 +94,48 @@ def _chat_claude_code(system: str, user: str) -> str | None:
         return None
 
 
+_SDK_MODEL_MAP = {
+    # SDK speaks alias names; map our role-model ids onto them
+    "claude-haiku-4-5": "haiku",
+    "claude-sonnet-4.5": "sonnet",
+}
+
+
+def _chat_claude_sdk(system: str, user: str, model: str) -> str | None:
+    """The subscription door that actually works: the Claude Agent SDK loads
+    NO filesystem settings/hooks/CLAUDE.md by default — clean calls on the
+    Max plan (VERIFIED 2026-08-18; the raw CLI door remains contaminated).
+    Slower per call (subprocess spawn); fine for extraction pipelines."""
+    try:
+        import anyio
+        from claude_agent_sdk import ClaudeAgentOptions, query
+
+        async def _run():
+            options = ClaudeAgentOptions(
+                system_prompt=system, max_turns=1, allowed_tools=[],
+                model=_SDK_MODEL_MAP.get(model, model))
+            out = []
+            async for msg in query(prompt=user, options=options):
+                if hasattr(msg, "content"):
+                    for block in msg.content:
+                        if hasattr(block, "text"):
+                            out.append(block.text)
+            return "\n".join(out).strip() or None
+
+        return anyio.run(_run)
+    except Exception as e:
+        logger.warning("claude-sdk door failed: %s", e)
+        return None
+
+
 def _chat(system: str, user: str, max_tokens: int = 1500,
           model: str | None = None) -> str | None:
     """One completion through the configured door. None on any failure.
     model overrides the default per role (gate/extract/trace brains differ)."""
     use_model = model or config.EXTRACTOR_MODEL
     try:
+        if config.EXTRACTOR_PROVIDER == "claude-sdk":
+            return _chat_claude_sdk(system, user, use_model)
         if config.EXTRACTOR_PROVIDER == "claude-code":
             return _chat_claude_code(system, user)
         if config.EXTRACTOR_PROVIDER == "anthropic" and config.ANTHROPIC_API_KEY:
