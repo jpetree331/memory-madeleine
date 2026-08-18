@@ -61,6 +61,12 @@ Also list the entities this exchange touches — people, projects, places, and
 load-bearing concepts (a song, a car, a recurring idea). Key is a canonical
 lowercase slug; reuse obvious slugs ('jess', not 'jess-the-user'). Entities
 must be explicitly present; never infer or invent them.
+ENTITY KINDS are a small fixed set: 'person' (humans only), 'ai' (any AI
+being — agents, models, assistants: Rowan, Grain, Claude, Nemotron...),
+'project', 'place', 'concept'. Never tag an AI as 'person'. Abstract nouns
+(faith, grace, texture, memory) are 'concept', never 'person' — the same
+abstract-nouns-are-not-people law that governs facts. Do not invent new
+kind labels.
 
 Respond with STRICT JSON only, no markdown fences:
 {"facts": ["...", "..."], "superseded_ids": [123],

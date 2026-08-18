@@ -75,6 +75,20 @@ def _as_array(v) -> np.ndarray:
     return np.asarray(v, dtype=np.float32)
 
 
+def _stable_signs(vt: np.ndarray) -> np.ndarray:
+    """SVD component signs are arbitrary — adding one episode between runs
+    can mirror the whole atlas (Jess noticed the flavor sky flip on the
+    y-axis, 2026-08-18). Canonical convention: each component's largest-
+    magnitude loading is made positive, so the map keeps its orientation
+    across nightly runs."""
+    vt = vt.copy()
+    for i in range(vt.shape[0]):
+        j = np.argmax(np.abs(vt[i]))
+        if vt[i, j] < 0:
+            vt[i] = -vt[i]
+    return vt
+
+
 def _clean_llm_text(text: str) -> str:
     """Strip markdown decorations models add despite instructions —
     heading lines, code fences (MEASURED: Haiku prefixed '# Trace Rewrite')."""
@@ -290,7 +304,7 @@ def run(now: datetime | None = None) -> dict:
                             mat = np.array([_as_array(r["flavor"]) for r in rows])
                             centered = mat - mat.mean(axis=0)
                             _, _, vt = np.linalg.svd(centered, full_matrices=False)
-                            proj = centered @ vt[:2].T
+                            proj = centered @ _stable_signs(vt[:2]).T
                             for r, (x, y) in zip(rows, proj):
                                 cur.execute("UPDATE episodes SET proj_x=%s, proj_y=%s "
                                             "WHERE id=%s",
@@ -319,7 +333,7 @@ def run(now: datetime | None = None) -> dict:
                     centered = mat - mat.mean(axis=0)
                     # PCA via SVD — deterministic, dependency-light (locked choice)
                     _, _, vt = np.linalg.svd(centered, full_matrices=False)
-                    proj = centered @ vt[:2].T
+                    proj = centered @ _stable_signs(vt[:2]).T
                     for r, (x, y) in zip(rows, proj):
                         cur.execute("UPDATE episodes SET reg_proj_x=%s, reg_proj_y=%s "
                                     "WHERE id=%s", (float(x), float(y), r["id"]))
