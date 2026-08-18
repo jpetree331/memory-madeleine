@@ -328,8 +328,11 @@ def facts_list(scope: str | None = None, q: str | None = None,
 
 
 @app.get("/api/atlas")
-def atlas(scope: str | None = None, space: str = "register"):
-    """Projected memory landscape. Register space until Phase-5 flavor exists."""
+def atlas(scope: str | None = None, space: str = "register", links: bool = False):
+    """Projected memory landscape. Register space until Phase-5 flavor exists.
+    links=true adds the association map: co_retrieval edges plus pairs of
+    episodes sharing a RARE entity (common entities like the humans touch
+    everything and would white out the map)."""
     col = "reg_proj_x, reg_proj_y" if space == "register" else "proj_x, proj_y"
     where = "AND scope=%s" if scope else ""
     params = (scope,) if scope else ()
@@ -341,7 +344,148 @@ def atlas(scope: str | None = None, space: str = "register"):
                 f"occurred_at FROM episodes "
                 f"WHERE {col.split(',')[0].strip()} IS NOT NULL AND NOT quarantined "
                 f"{where}", params)
-            return {"points": [dict(r) for r in cur.fetchall()], "space": space}
+            points = [dict(r) for r in cur.fetchall()]
+            out = {"points": points, "space": space}
+            if links and points:
+                ids = [p["id"] for p in points]
+                # direct co-retrieval bonds (memories that fire together)
+                cur.execute(
+                    "SELECT src_id AS a, dst_id AS b, weight, kind FROM edges "
+                    "WHERE src_kind='episode' AND dst_kind='episode' "
+                    "AND src_id=ANY(%s) AND dst_id=ANY(%s)", (ids, ids))
+                pairs = {}
+                for r in cur.fetchall():
+                    k = (min(r["a"], r["b"]), max(r["a"], r["b"]))
+                    pairs[k] = {"a": k[0], "b": k[1], "kind": "co_retrieval",
+                                "weight": float(r["weight"])}
+                # shared rare entities (2..12 episodes) — the specific things
+                cur.execute(
+                    "SELECT e.dst_id AS ent, array_agg(e.src_id) AS eps "
+                    "FROM edges e WHERE e.src_kind='episode' AND e.dst_kind='entity' "
+                    "AND e.src_id=ANY(%s) GROUP BY e.dst_id "
+                    "HAVING COUNT(*) BETWEEN 2 AND 12", (ids,))
+                for r in cur.fetchall():
+                    eps = sorted(set(r["eps"]))
+                    for i in range(len(eps)):
+                        for j in range(i + 1, len(eps)):
+                            k = (eps[i], eps[j])
+                            if k not in pairs:
+                                pairs[k] = {"a": k[0], "b": k[1],
+                                            "kind": "shared_entity", "weight": 0.0}
+                            pairs[k]["weight"] += 1.0
+                ranked = sorted(pairs.values(), key=lambda p: -p["weight"])[:800]
+                out["links"] = ranked
+            return out
+
+
+@app.get("/api/entities")
+def entities_list(scope: str | None = None, q: str | None = None, limit: int = 200):
+    """The entity roster (Hindsight-style): mentions, first seen, last seen.
+    Entities are global; scope arrives through the episodes/facts that touch
+    them. first/last seen use true event dates where known."""
+    scope_ep = "AND ep.scope=%s" if scope else ""
+    scope_f = "AND f.scope=%s" if scope else ""
+    name_f = "AND (en.name ILIKE %s OR en.key ILIKE %s)" if q else ""
+    params = []
+    if scope:
+        params.append(scope)
+    if q:
+        params += [f"%{q}%", f"%{q}%"]
+    params2 = list(params)  # same shape for the facts leg
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                WITH ep_leg AS (
+                  SELECT en.id, COUNT(DISTINCT e.src_id) AS mentions,
+                         MIN(COALESCE(ep.occurred_at, ep.created_at)) AS first_seen,
+                         MAX(COALESCE(ep.occurred_at, ep.created_at)) AS last_seen
+                  FROM entities en
+                  JOIN edges e ON e.dst_kind='entity' AND e.dst_id=en.id
+                             AND e.src_kind='episode'
+                  JOIN episodes ep ON ep.id=e.src_id
+                  WHERE TRUE {scope_ep} {name_f}
+                  GROUP BY en.id),
+                f_leg AS (
+                  SELECT en.id, COUNT(DISTINCT e.src_id) AS mentions,
+                         MIN(COALESCE(f.occurred_at, f.created_at)) AS first_seen,
+                         MAX(COALESCE(f.occurred_at, f.created_at)) AS last_seen
+                  FROM entities en
+                  JOIN edges e ON e.dst_kind='entity' AND e.dst_id=en.id
+                             AND e.src_kind='fact'
+                  JOIN facts f ON f.id=e.src_id
+                  WHERE TRUE {scope_f} {name_f}
+                  GROUP BY en.id)
+                SELECT en.id, en.key, en.name, en.kind,
+                       COALESCE(el.mentions, 0) + COALESCE(fl.mentions, 0) AS mentions,
+                       LEAST(el.first_seen, fl.first_seen) AS first_seen,
+                       GREATEST(el.last_seen, fl.last_seen) AS last_seen
+                FROM entities en
+                LEFT JOIN ep_leg el ON el.id=en.id
+                LEFT JOIN f_leg fl ON fl.id=en.id
+                WHERE COALESCE(el.mentions, 0) + COALESCE(fl.mentions, 0) > 0
+                ORDER BY mentions DESC LIMIT %s
+                """, params + params2 + [limit])
+            return {"entities": [dict(r) for r in cur.fetchall()]}
+
+
+@app.get("/api/entities/{entity_id}")
+def entity_dossier(entity_id: int, scope: str | None = None):
+    """Everything one entity touches: linked episodes and facts."""
+    scope_ep = "AND ep.scope=%s" if scope else ""
+    scope_f = "AND f.scope=%s" if scope else ""
+    p = [entity_id] + ([scope] if scope else [])
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, key, name, kind, summary FROM entities "
+                        "WHERE id=%s", (entity_id,))
+            ent = cur.fetchone()
+            if not ent:
+                raise HTTPException(404, "Entity not found")
+            ent = dict(ent)
+            cur.execute(
+                f"SELECT ep.id, LEFT(ep.trace, 200) AS trace, ep.register, "
+                f"ep.salience, COALESCE(ep.occurred_at, ep.created_at) AS occurred_at, "
+                f"e.weight FROM edges e JOIN episodes ep ON ep.id=e.src_id "
+                f"WHERE e.dst_kind='entity' AND e.dst_id=%s AND e.src_kind='episode' "
+                f"{scope_ep} ORDER BY occurred_at DESC NULLS LAST LIMIT 100", p)
+            ent["episodes"] = [dict(r) for r in cur.fetchall()]
+            cur.execute(
+                f"SELECT f.id, f.content, f.status, "
+                f"COALESCE(f.occurred_at, f.created_at) AS occurred_at "
+                f"FROM edges e JOIN facts f ON f.id=e.src_id "
+                f"WHERE e.dst_kind='entity' AND e.dst_id=%s AND e.src_kind='fact' "
+                f"{scope_f} ORDER BY occurred_at DESC NULLS LAST LIMIT 100", p)
+            ent["facts"] = [dict(r) for r in cur.fetchall()]
+    return ent
+
+
+@app.get("/api/registers")
+def registers_census(scope: str | None = None, q: str | None = None, limit: int = 300):
+    """The flavor census. Deep flavor is a continuous field — these are its
+    NAMED shadows: exact register tags enumerated with counts and first/last
+    seen. A tag that recurs is a mood the reader keeps finding."""
+    clauses, params = ["register IS NOT NULL", "NOT quarantined"], []
+    if scope:
+        clauses.append("scope=%s"); params.append(scope)
+    if q:
+        clauses.append("register ILIKE %s"); params.append(f"%{q}%")
+    where = " AND ".join(clauses)
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT register, COUNT(*) AS n, "
+                f"MIN(COALESCE(occurred_at, created_at)) AS first_seen, "
+                f"MAX(COALESCE(occurred_at, created_at)) AS last_seen, "
+                f"AVG(salience) AS avg_salience "
+                f"FROM episodes WHERE {where} "
+                f"GROUP BY register ORDER BY n DESC, register LIMIT %s",
+                params + [limit])
+            rows = [dict(r) for r in cur.fetchall()]
+            cur.execute(f"SELECT COUNT(DISTINCT register) AS d, COUNT(*) AS t "
+                        f"FROM episodes WHERE {where}", params)
+            meta = cur.fetchone()
+    return {"registers": rows, "distinct": meta["d"], "episodes": meta["t"]}
 
 
 @app.get("/api/gate/feed")

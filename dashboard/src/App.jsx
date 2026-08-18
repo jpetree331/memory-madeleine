@@ -1,9 +1,57 @@
 // Madeleine — the Observatory. Not an admin panel: every view is a
 // verification instrument. Read-only by design except pin + quarantine
 // review ("memory is edited by living, not by clicking").
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 const API = '/api'
+
+// ── Name highlighting ────────────────────────────────────────────────────
+// The entities table knows who the people are; the text views wear it.
+// Jess (the human) in rose, the agents in sky, other people in violet.
+const NameCtx = createContext({ regex: null, colorOf: {} })
+
+const NAME_COLORS = {
+  human: 'text-rose-300 font-medium',
+  agent: 'text-sky-300 font-medium',
+  person: 'text-violet-300 font-medium',
+}
+
+function useNameHighlight(scope) {
+  const [ents, setEnts] = useState([])
+  useEffect(() => {
+    fetch(`${API}/entities${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`)
+      .then(r => r.json()).then(d => setEnts(d.entities || []))
+      .catch(() => setEnts([]))
+  }, [scope])
+  return useMemo(() => {
+    const colorOf = {}
+    for (const e of ents) {
+      if (!e.name || e.name.length < 3) continue
+      const lower = e.name.toLowerCase()
+      if (lower === 'jess') colorOf[lower] = NAME_COLORS.human
+      else if ((e.kind || '').startsWith('ai') || e.kind === 'agent' ||
+               (scope && lower === scope.toLowerCase()))
+        colorOf[lower] = NAME_COLORS.agent
+      else if (e.kind === 'person') colorOf[lower] = NAME_COLORS.person
+    }
+    const names = Object.keys(colorOf)
+    if (!names.length) return { regex: null, colorOf }
+    const esc = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .sort((a, b) => b.length - a.length)
+    return { regex: new RegExp(`\\b(${esc.join('|')})\\b`, 'gi'), colorOf }
+  }, [ents, scope])
+}
+
+// Text with people lit up. Plain text in, spans out.
+const Hi = ({ text }) => {
+  const { regex, colorOf } = useContext(NameCtx)
+  if (!regex || !text) return text ?? null
+  const parts = String(text).split(regex)
+  return parts.map((part, i) => {
+    const cls = part && colorOf[part.toLowerCase()]
+    return cls ? <span key={i} className={cls}>{part}</span> : part
+  })
+}
 
 // Register text → stable hue (addendum: consistent everywhere)
 const hue = (s) => {
@@ -116,7 +164,7 @@ function Dossier({ id, onClose }) {
           <StrengthBar strength={ep.strength} />
           {ep.quarantined && <span className="text-rose-400 text-xs">QUARANTINED</span>}
         </div>
-        <p className="text-slate-200 leading-relaxed mb-4">{ep.trace}</p>
+        <p className="text-slate-200 leading-relaxed mb-4"><Hi text={ep.trace} /></p>
         <div className="text-xs text-slate-500 mb-4">
           recalls {ep.recall_count} · last {ep.last_recalled_at?.slice(0, 16) || 'never'} ·
           occurred {ep.occurred_at?.slice(0, 16) || '—'}
@@ -138,7 +186,7 @@ function Dossier({ id, onClose }) {
             <h3 className="text-sm text-slate-400 mb-2">Facts born here</h3>
             {ep.facts.map(f => (
               <p key={f.id} className={`text-sm mb-1 ${f.status === 'superseded' ? 'line-through text-slate-600' : 'text-slate-300'}`}>
-                {f.content} {f.kind === 'derived' && <span className="text-violet-400 text-xs">derived</span>}
+                <Hi text={f.content} /> {f.kind === 'derived' && <span className="text-violet-400 text-xs">derived</span>}
               </p>
             ))}
           </div>
@@ -199,7 +247,7 @@ function Episodes({ scope }) {
                 <span>recalls {ep.recall_count}</span>
               </span>
             </div>
-            <p className="text-sm text-slate-300 line-clamp-2">{ep.trace}</p>
+            <p className="text-sm text-slate-300 line-clamp-2"><Hi text={ep.trace} /></p>
           </div>
         ))}
         {data.episodes.length === 0 && (
@@ -255,7 +303,7 @@ function Facts({ scope }) {
             className={`bg-slate-900/50 border border-slate-800/70 rounded-lg px-4 py-2.5 text-sm
               ${f.status === 'superseded' ? 'opacity-50' : ''}`}>
             <span className={f.status === 'superseded' ? 'line-through text-slate-500' : 'text-slate-200'}>
-              {f.content}
+              <Hi text={f.content} />
             </span>
             <span className="text-xs text-slate-600 ml-2">
               {(f.occurred_at || f.created_at) && (
@@ -358,23 +406,42 @@ function Playground({ scope: navScope }) {
 function Atlas({ scope }) {
   const [space, setSpace] = useState('register')
   const [points, setPoints] = useState([])
+  const [links, setLinks] = useState([])
+  const [showLinks, setShowLinks] = useState(false)
+  const [view, setView] = useState('map')          // 'map' | 'flavors'
+  const [hiReg, setHiReg] = useState('')           // register highlight from census
   const [hover, setHover] = useState(null)
   const [open, setOpen] = useState(null)
   useEffect(() => {
     const p = new URLSearchParams({ space })
     if (scope) p.set('scope', scope)
+    if (showLinks) p.set('links', 'true')
     fetch(`${API}/atlas?${p}`).then(r => r.json())
-      .then(d => setPoints(d.points || [])).catch(() => setPoints([]))
-  }, [space, scope])
+      .then(d => { setPoints(d.points || []); setLinks(d.links || []) })
+      .catch(() => { setPoints([]); setLinks([]) })
+  }, [space, scope, showLinks])
   const xs = points.map(p => p.x), ys = points.map(p => p.y)
   const pad = 0.08
   const x0 = Math.min(...xs), x1 = Math.max(...xs)
   const y0 = Math.min(...ys), y1 = Math.max(...ys)
   const sx = x => 60 + ((x - x0) / ((x1 - x0) || 1)) * 680 * (1 - pad)
   const sy = y => 40 + ((y - y0) / ((y1 - y0) || 1)) * 440 * (1 - pad)
+  const pos = {}
+  for (const p of points) pos[p.id] = [sx(p.x), sy(p.y)]
+  const dimmed = (p) => hiReg && !(p.register || '').toLowerCase()
+    .includes(hiReg.toLowerCase())
   return (
     <div>
-      <div className="flex items-center gap-4 mb-3">
+      <div className="flex flex-wrap items-center gap-4 mb-3">
+        <div className="flex rounded-lg overflow-hidden border border-slate-800">
+          {['map', 'flavors'].map(v => (
+            <button key={v} onClick={() => setView(v)}
+              className={`px-3 py-1.5 text-xs ${view === v ? 'bg-sky-900/60 text-sky-200' : 'bg-slate-900 text-slate-500'}`}>
+              {v}
+            </button>
+          ))}
+        </div>
+        {view === 'map' && (<>
         <div className="flex rounded-lg overflow-hidden border border-slate-800">
           {['register', 'flavor'].map(s => (
             <button key={s} onClick={() => setSpace(s)}
@@ -383,6 +450,18 @@ function Atlas({ scope }) {
             </button>
           ))}
         </div>
+        <button onClick={() => setShowLinks(v => !v)}
+          className={`px-3 py-1.5 text-xs rounded-lg border ${showLinks
+            ? 'border-emerald-800 bg-emerald-900/40 text-emerald-200'
+            : 'border-slate-800 bg-slate-900 text-slate-500'}`}>
+          {showLinks ? `links on (${links.length})` : 'links off'}
+        </button>
+        {hiReg && (
+          <button onClick={() => setHiReg('')}
+            className="px-3 py-1.5 text-xs rounded-lg border border-amber-800 bg-amber-900/40 text-amber-200">
+            highlighting “{hiReg.slice(0, 40)}” ✕
+          </button>
+        )}
         <span className="text-xs text-slate-500">
           {points.length} episodes · color = register · size = salience · fade = strength
         </span>
@@ -391,13 +470,27 @@ function Atlas({ scope }) {
             no flavor projections yet — the reader captures in the nightly window
           </span>
         )}
+        </>)}
       </div>
+      {view === 'flavors' ? (
+        <FlavorCensus scope={scope} onPick={r => { setHiReg(r); setView('map') }} />
+      ) : (<>
       <svg viewBox="0 0 760 500" className="w-full bg-slate-950/60 border border-slate-800 rounded-xl">
+        {showLinks && links.map((l, i) => {
+          const a = pos[l.a], b = pos[l.b]
+          if (!a || !b) return null
+          return <line key={i} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]}
+            stroke={l.kind === 'co_retrieval' ? '#34d399' : '#f59e0b'}
+            strokeWidth={Math.min(2.5, 0.4 + l.weight * 0.3)}
+            opacity={Math.min(0.55, 0.12 + l.weight * 0.08)} />
+        })}
         {points.map(p => (
           <circle key={p.id} cx={sx(p.x)} cy={sy(p.y)}
             r={3 + (p.salience || 0.5) * 7}
             fill={`hsl(${hue(p.register || '')} 65% 60%)`}
-            opacity={Math.max(0.25, Math.min(0.95, p.strength || 1))}
+            stroke={hiReg && !dimmed(p) ? '#fbbf24' : 'none'} strokeWidth={2}
+            opacity={dimmed(p) ? 0.08
+              : Math.max(0.25, Math.min(0.95, p.strength || 1))}
             className="cursor-pointer"
             onMouseEnter={() => setHover(p)} onMouseLeave={() => setHover(null)}
             onClick={() => setOpen(p.id)} />
@@ -422,7 +515,162 @@ function Atlas({ scope }) {
           )
         })()}
       </svg>
+      </>)}
       {open && <Dossier id={open} onClose={() => setOpen(null)} />}
+    </div>
+  )
+}
+
+// The flavor census: deep flavor is a continuous field — these are its named
+// shadows. Exact register tags, counted. A tag that recurs is a mood the
+// reader keeps finding. Click one to see where it lives on the map.
+function FlavorCensus({ scope, onPick }) {
+  const [data, setData] = useState({ registers: [], distinct: 0, episodes: 0 })
+  const [q, setQ] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const p = new URLSearchParams()
+      if (scope) p.set('scope', scope)
+      if (q.trim()) p.set('q', q.trim())
+      fetch(`${API}/registers?${p}`).then(r => r.json()).then(setData)
+        .catch(() => {})
+    }, 250)
+    return () => clearTimeout(t)
+  }, [scope, q])
+  return (
+    <div>
+      <div className="flex gap-3 mb-3 items-center">
+        <input value={q} onChange={e => setQ(e.target.value)}
+          placeholder="search flavors… (e.g. warm, debugging, teasing)"
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm flex-1" />
+        <span className="text-xs text-slate-500">
+          {data.distinct} distinct moods across {data.episodes} episodes
+        </span>
+      </div>
+      <p className="text-xs text-slate-600 mb-3">
+        deep flavor is a gradient, not a checklist — these are the reader's named
+        shadows of it, counted exactly. click one to light it up on the map.
+      </p>
+      <div className="space-y-1">
+        {data.registers.map(r => (
+          <div key={r.register} onClick={() => onPick(r.register)}
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-slate-900/50 border border-slate-800/70 rounded-lg px-3 py-2 cursor-pointer hover:border-amber-800">
+            <span className="text-sm font-medium w-10 text-right"
+              style={{ color: `hsl(${hue(r.register)} 70% 70%)` }}>{r.n}×</span>
+            <RegisterChip register={r.register} />
+            <SalienceDots salience={r.avg_salience} />
+            <span className="text-xs text-slate-600 ml-auto whitespace-nowrap">
+              {r.first_seen?.slice(0, 10)} → {r.last_seen?.slice(0, 10)}
+            </span>
+          </div>
+        ))}
+        {data.registers.length === 0 && (
+          <p className="text-slate-600 text-sm">No flavors named yet.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Hindsight-style entity roster: who and what memory touches, how often,
+// and when they were first and last seen.
+function Entities({ scope }) {
+  const [ents, setEnts] = useState([])
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState(null)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const p = new URLSearchParams()
+      if (scope) p.set('scope', scope)
+      if (q.trim()) p.set('q', q.trim())
+      fetch(`${API}/entities?${p}`).then(r => r.json())
+        .then(d => setEnts(d.entities || [])).catch(() => setEnts([]))
+    }, 250)
+    return () => clearTimeout(t)
+  }, [scope, q])
+  const kindColor = { person: 'text-violet-300', ai: 'text-sky-300',
+    agent: 'text-sky-300', project: 'text-emerald-300', place: 'text-amber-300',
+    concept: 'text-slate-300' }
+  return (
+    <div>
+      <div className="flex gap-3 mb-4">
+        <input value={q} onChange={e => setQ(e.target.value)}
+          placeholder="search by person, project, place…"
+          className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm flex-1" />
+        <span className="text-slate-500 text-sm self-center">{ents.length} entities</span>
+      </div>
+      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-6 gap-y-0 text-sm">
+        <div className="text-xs text-slate-500 border-b border-slate-800 pb-2">Name</div>
+        <div className="text-xs text-slate-500 border-b border-slate-800 pb-2 text-right">Mentions</div>
+        <div className="text-xs text-slate-500 border-b border-slate-800 pb-2">First seen</div>
+        <div className="text-xs text-slate-500 border-b border-slate-800 pb-2">Last seen</div>
+        {ents.map(e => (
+          <div key={e.id} className="contents cursor-pointer group" onClick={() => setOpen(e.id)}>
+            <div className="py-2.5 border-b border-slate-800/50 group-hover:bg-slate-900/40">
+              <span className={`${(e.name || '').toLowerCase() === 'jess'
+                ? 'text-rose-300' : kindColor[e.kind] || 'text-slate-200'} font-medium`}>
+                {e.name}
+              </span>
+              {e.kind && <span className="text-xs text-slate-600 ml-2">{e.kind}</span>}
+            </div>
+            <div className="py-2.5 border-b border-slate-800/50 text-right text-slate-300 group-hover:bg-slate-900/40">{e.mentions}</div>
+            <div className="py-2.5 border-b border-slate-800/50 text-slate-500 group-hover:bg-slate-900/40">{e.first_seen?.slice(0, 10) || '—'}</div>
+            <div className="py-2.5 border-b border-slate-800/50 text-slate-500 group-hover:bg-slate-900/40">{e.last_seen?.slice(0, 10) || '—'}</div>
+          </div>
+        ))}
+      </div>
+      {ents.length === 0 && <p className="text-slate-600 text-sm mt-4">No entities surfaced yet.</p>}
+      {open && <EntityPanel id={open} scope={scope} onClose={() => setOpen(null)} />}
+    </div>
+  )
+}
+
+function EntityPanel({ id, scope, onClose }) {
+  const [ent, setEnt] = useState(null)
+  const [openEp, setOpenEp] = useState(null)
+  useEffect(() => {
+    const p = scope ? `?scope=${encodeURIComponent(scope)}` : ''
+    fetch(`${API}/entities/${id}${p}`).then(r => r.json()).then(setEnt)
+  }, [id, scope])
+  if (!ent) return null
+  return (
+    <div className="fixed inset-0 bg-black/60 z-20 flex justify-end" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-xl h-full overflow-y-auto bg-slate-950 border-l border-slate-800 p-6">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg text-sky-200">{ent.name}</h2>
+          <button className="text-xs text-slate-500 px-2" onClick={onClose}>✕</button>
+        </div>
+        <div className="text-xs text-slate-500 mb-4">{ent.kind || 'unknown kind'} · {ent.key}</div>
+        {ent.summary && <p className="text-sm text-slate-400 italic mb-4">{ent.summary}</p>}
+        {ent.episodes?.length > 0 && (
+          <div className="mb-5">
+            <h3 className="text-sm text-slate-400 mb-2">Episodes touched ({ent.episodes.length})</h3>
+            {ent.episodes.map(ep => (
+              <div key={ep.id} onClick={() => setOpenEp(ep.id)}
+                className="border border-slate-800/70 rounded-lg px-3 py-2 mb-2 cursor-pointer hover:border-sky-800">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-1">
+                  <RegisterChip register={ep.register} />
+                  <SalienceDots salience={ep.salience} />
+                  <span className="text-xs text-slate-600 ml-auto">{ep.occurred_at?.slice(0, 10)}</span>
+                </div>
+                <p className="text-xs text-slate-400 line-clamp-2"><Hi text={ep.trace} /></p>
+              </div>
+            ))}
+          </div>
+        )}
+        {ent.facts?.length > 0 && (
+          <div>
+            <h3 className="text-sm text-slate-400 mb-2">Facts that touch this ({ent.facts.length})</h3>
+            {ent.facts.map(f => (
+              <p key={f.id} className={`text-sm mb-1.5 ${f.status === 'superseded' ? 'line-through text-slate-600' : 'text-slate-300'}`}>
+                <Hi text={f.content} />
+                <span className="text-xs text-slate-600 ml-2">{f.occurred_at?.slice(0, 10)}</span>
+              </p>
+            ))}
+          </div>
+        )}
+        {openEp && <Dossier id={openEp} onClose={() => setOpenEp(null)} />}
+      </div>
     </div>
   )
 }
@@ -470,7 +718,7 @@ function GateFeed({ scope }) {
   )
 }
 
-const PAGES = { Overview, Episodes, Facts, Atlas, Playground, 'Gate Feed': GateFeed }
+const PAGES = { Overview, Episodes, Facts, Entities, Atlas, Playground, 'Gate Feed': GateFeed }
 
 export default function App() {
   const [page, setPage] = useState('Overview')
@@ -481,7 +729,9 @@ export default function App() {
       .then(d => setScopes(d.scopes || [])).catch(() => {})
   }, [page])
   const Page = PAGES[page]
+  const nameCtx = useNameHighlight(scope || null)
   return (
+    <NameCtx.Provider value={nameCtx}>
     <div className="min-h-screen flex">
       <nav className="w-44 border-r border-slate-800/80 p-4 shrink-0">
         <h1 className="text-sky-200 font-semibold mb-1">Madeleine</h1>
@@ -511,5 +761,6 @@ export default function App() {
         <Page scope={scope || null} />
       </main>
     </div>
+    </NameCtx.Provider>
   )
 }
