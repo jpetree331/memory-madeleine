@@ -286,9 +286,22 @@ def run(now: datetime | None = None) -> dict:
         logger.error("fact dating pass failed: %s", e)
 
     # ── 4b. Deep flavor capture (Sprint 5.1) — nightly, VRAM-guarded ─────────
+    # Single-tenant GPU rule (the 2026-08-18 crash lesson): never load the
+    # 17GB reader while an extraction backlog means the SDK fleet is active.
+    # A nonzero queue = a backfill/sweep is (or will be) running; flavor
+    # waits for a quiet night, and backfills run their own capture at the end.
     try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS c FROM raw_exchanges "
+                            "WHERE extracted_at IS NULL")
+                backlog = cur.fetchone()["c"]
         from . import reader
-        if reader.gpu_ready():
+        if backlog:
+            summary["flavor_captured"] = f"skipped: {backlog} extractions queued"
+            logger.info("flavor pass skipped — %d extractions queued "
+                        "(single-tenant GPU rule)", backlog)
+        elif reader.gpu_ready():
             with _conn() as conn:
                 captured = reader.capture_batch(conn)
                 summary["flavor_captured"] = captured
