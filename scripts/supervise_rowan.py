@@ -44,7 +44,34 @@ def run(script):
     log(f"{script} exited rc={r.returncode}")
 
 
+LOCK = os.path.join(os.path.dirname(HERE), "data", "shepherd.pid")
+
+
+def _acquire_lock() -> bool:
+    """One shepherd only. Two racing the same queue double-extract exchanges
+    (MEASURED 2026-08-19: 23 duplicate episodes from twin shepherds after
+    the crash recovery). Stale locks from dead pids are reclaimed."""
+    if os.path.exists(LOCK):
+        try:
+            old = int(open(LOCK).read().strip())
+            import ctypes
+            h = ctypes.windll.kernel32.OpenProcess(0x1000, False, old)
+            if h:
+                ctypes.windll.kernel32.CloseHandle(h)
+                log(f"another shepherd holds the lock (pid {old}) — exiting")
+                return False
+        except (ValueError, OSError):
+            pass
+        log("stale lock reclaimed")
+    os.makedirs(os.path.dirname(LOCK), exist_ok=True)
+    with open(LOCK, "w") as f:
+        f.write(str(os.getpid()))
+    return True
+
+
 def main():
+    if not _acquire_lock():
+        return
     passes = 0
     while True:
         passes += 1
@@ -72,4 +99,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        try:
+            if os.path.exists(LOCK) and open(LOCK).read().strip() == str(os.getpid()):
+                os.remove(LOCK)
+        except OSError:
+            pass
