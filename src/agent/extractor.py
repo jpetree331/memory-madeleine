@@ -239,7 +239,7 @@ def verify_facts(exchange_text: str, facts: list[str]) -> list[str]:
         return facts
     try:
         cleaned = raw.strip()
-        if cleaned.startswith("```"):
+        if not cleaned.startswith("{") and "{" in cleaned:
             cleaned = cleaned[cleaned.find("{"):cleaned.rfind("}") + 1]
         verdicts = {int(v["index"]): v for v in json.loads(cleaned).get("verdicts", [])}
         kept = []
@@ -265,10 +265,11 @@ def extract_facts(exchange_text: str, near_facts: list[dict]) -> dict | None:
     if raw is None:
         return None
     try:
-        # tolerate accidental fences despite instructions
+        # tolerate accidental fences AND leading commentary despite
+        # instructions (MEASURED 2026-08-19: sonnet sometimes prefaces the
+        # JSON with a sentence, e.g. "ignoring that tool call — proceeding")
         cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`")
+        if not cleaned.startswith("{") and "{" in cleaned:
             cleaned = cleaned[cleaned.find("{"):cleaned.rfind("}") + 1]
         out = json.loads(cleaned)
         facts = [str(f).strip() for f in (out.get("facts") or []) if str(f).strip()]

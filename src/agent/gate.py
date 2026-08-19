@@ -81,7 +81,7 @@ def assess(exchange_text: str) -> dict:
                 "mode": None, "reasons": ["gate unavailable — facts-only default"]}
     try:
         cleaned = raw.strip()
-        if cleaned.startswith("```"):
+        if not cleaned.startswith("{") and "{" in cleaned:
             cleaned = cleaned[cleaned.find("{"):cleaned.rfind("}") + 1]
         out = json.loads(cleaned)
         mode = out.get("mode")
