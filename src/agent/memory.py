@@ -81,6 +81,19 @@ def _extract_worker(exchange_id: int) -> None:
             # One banner reaches every reader: gate, trace, extract, verify.
             exchange_text = SOLITARY_BANNER + exchange_text
 
+        # 0. Idempotence: a retry of an interrupted extraction (killed after
+        # an episode insert but before the extracted_at stamp) must reuse
+        # the existing episode, never write a twin (MEASURED 2026-08-19:
+        # 23 duplicate episodes from mid-flight kills in crash recovery).
+        prior_episode_id = None
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM episodes WHERE exchange_start=%s "
+                            "ORDER BY id LIMIT 1", (exchange_id,))
+                prior = cur.fetchone()
+                if prior:
+                    prior_episode_id = prior["id"]
+
         # 1. The gate — salience AND sanitization, one judgment
         g = gate.assess(exchange_text)
 
@@ -93,14 +106,17 @@ def _extract_worker(exchange_id: int) -> None:
 
         # 2. Injection risk: quarantined episode, NO facts, raw kept, loud log
         if g["injection_risk"]:
-            trace = episodes.write_trace(exchange_text) or \
-                "(quarantined before trace generation)"
             with _conn() as conn:
-                ep_id = episodes.create(
-                    conn, scope=row["scope"], trace=trace, register=g["register"],
-                    salience=g["salience"], quarantined=True,
-                    exchange_id=exchange_id, occurred_at=row["occurred_at"],
-                    mode=g.get("mode"))
+                if prior_episode_id is None:
+                    trace = episodes.write_trace(exchange_text) or \
+                        "(quarantined before trace generation)"
+                    ep_id = episodes.create(
+                        conn, scope=row["scope"], trace=trace, register=g["register"],
+                        salience=g["salience"], quarantined=True,
+                        exchange_id=exchange_id, occurred_at=row["occurred_at"],
+                        mode=g.get("mode"))
+                else:
+                    ep_id = prior_episode_id
                 gate.log_decision(conn, row["scope"], "quarantined", g,
                                   exchange_id, ep_id)
                 with conn.cursor() as cur:
@@ -110,9 +126,10 @@ def _extract_worker(exchange_id: int) -> None:
                            exchange_id, ep_id, "; ".join(g["reasons"]))
             return
 
-        # 3. Episode, when the exchange earns one
-        episode_id = None
-        episodic = g["salience"] >= config.SALIENCE_THRESHOLD
+        # 3. Episode, when the exchange earns one (reusing a survivor from
+        # any interrupted earlier attempt)
+        episode_id = prior_episode_id
+        episodic = episode_id is None and g["salience"] >= config.SALIENCE_THRESHOLD
         if episodic:
             trace = episodes.write_trace(exchange_text)
             if trace:
