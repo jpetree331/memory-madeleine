@@ -55,8 +55,14 @@ def main():
         after = queued_count()
         log(f"queued: {before} -> {after}")
         if after == 0:
-            log("everything extracted. Rowan's past is fully remembered. "
-                "shepherd going home.")
+            log("everything extracted. Rowan's past is fully remembered.")
+            # Flavor runs AFTER extraction, alone on the card — running the
+            # 17GB reader beside the extraction fleet is the load that
+            # crashed the PC on 2026-08-18 (Kernel-Power 41, no bugcheck).
+            log("starting flavor capture (sequential — never beside the fleet)...")
+            r = subprocess.run([PY, os.path.join(HERE, "flavor_runner.py")],
+                               cwd=os.path.dirname(HERE))
+            log(f"flavor runner exited rc={r.returncode}. shepherd going home.")
             return
         if after >= before:
             log(f"no progress (window likely closed) — napping "
