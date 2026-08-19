@@ -42,6 +42,17 @@ EXTRACTOR_MODEL = os.environ.get("EXTRACTOR_MODEL", "claude-haiku-4-5").strip()
 GATE_MODEL = os.environ.get("GATE_MODEL", "claude-haiku-4-5").strip()
 EXTRACT_MODEL = os.environ.get("EXTRACT_MODEL", "claude-sonnet-4.5").strip()
 TRACE_MODEL = os.environ.get("TRACE_MODEL", "claude-sonnet-4.5").strip()
+VERIFY_MODEL = os.environ.get("VERIFY_MODEL", GATE_MODEL).strip()
+# Per-role providers (2026-08-19, cost door): each role may take its own door,
+# e.g. gate/extract/trace on Chutes Kimi with verify staying on Claude —
+# a cross-vendor verifier is a STRONGER audit than same-family checking.
+# Empty = inherit EXTRACTOR_PROVIDER.
+GATE_PROVIDER = os.environ.get("GATE_PROVIDER", "").strip()
+EXTRACT_PROVIDER = os.environ.get("EXTRACT_PROVIDER", "").strip()
+TRACE_PROVIDER = os.environ.get("TRACE_PROVIDER", "").strip()
+VERIFY_PROVIDER = os.environ.get("VERIFY_PROVIDER", "").strip()
+CHUTES_API_KEY = os.environ.get("CHUTES_API_KEY", "").strip()
+CHUTES_BASE_URL = os.environ.get("CHUTES_BASE_URL", "https://llm.chutes.ai/v1").strip()
 # Near-duplicate facts are skipped at insert above this cosine (0 disables)
 DEDUPE_THRESHOLD = float(os.environ.get("DEDUPE_THRESHOLD", "0.97"))
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()

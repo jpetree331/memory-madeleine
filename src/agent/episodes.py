@@ -52,7 +52,8 @@ def write_trace(exchange_text: str) -> str | None:
     from . import config
     for attempt in range(2):
         trace = extractor._chat(TRACE_SYSTEM, exchange_text, max_tokens=700,
-                                model=config.TRACE_MODEL)
+                                model=config.TRACE_MODEL,
+                                provider=config.TRACE_PROVIDER or None)
         if trace is None:
             return None
         trace = trace.strip()

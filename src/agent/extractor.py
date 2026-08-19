@@ -164,17 +164,41 @@ def _chat_claude_sdk(system: str, user: str, model: str) -> str | None:
         return None
 
 
-def _chat(system: str, user: str, max_tokens: int = 1500,
-          model: str | None = None) -> str | None:
-    """One completion through the configured door. None on any failure.
-    model overrides the default per role (gate/extract/trace brains differ)."""
-    use_model = model or config.EXTRACTOR_MODEL
+def _chat_chutes(system: str, user: str, model: str,
+                 max_tokens: int = 1500) -> str | None:
+    """The Chutes door (Jess's flat-rate sub): OpenAI-compatible endpoint,
+    open models (Kimi-K3 et al.). $0 marginal — headroom she already pays for."""
+    if not config.CHUTES_API_KEY:
+        logger.warning("chutes door: no CHUTES_API_KEY")
+        return None
     try:
-        if config.EXTRACTOR_PROVIDER == "claude-sdk":
+        with httpx.Client(timeout=180.0) as c:
+            r = c.post(f"{config.CHUTES_BASE_URL}/chat/completions",
+                       headers={"Authorization": f"Bearer {config.CHUTES_API_KEY}"},
+                       json={"model": model, "max_tokens": max_tokens,
+                             "messages": [{"role": "system", "content": system},
+                                          {"role": "user", "content": user}]})
+            r.raise_for_status()
+            return (r.json()["choices"][0]["message"].get("content") or "").strip()
+    except Exception as e:
+        logger.warning("chutes door failed: %s", e)
+        return None
+
+
+def _chat(system: str, user: str, max_tokens: int = 1500,
+          model: str | None = None, provider: str | None = None) -> str | None:
+    """One completion through the chosen door. None on any failure.
+    model/provider override per role (gate/extract/trace/verify differ)."""
+    use_model = model or config.EXTRACTOR_MODEL
+    use_provider = provider or config.EXTRACTOR_PROVIDER
+    try:
+        if use_provider == "chutes":
+            return _chat_chutes(system, user, use_model, max_tokens)
+        if use_provider == "claude-sdk":
             return _chat_claude_sdk(system, user, use_model)
-        if config.EXTRACTOR_PROVIDER == "claude-code":
+        if use_provider == "claude-code":
             return _chat_claude_code(system, user)
-        if config.EXTRACTOR_PROVIDER == "anthropic" and config.ANTHROPIC_API_KEY:
+        if use_provider == "anthropic" and config.ANTHROPIC_API_KEY:
             import anthropic
             client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
             msg = client.messages.create(
@@ -234,7 +258,8 @@ def verify_facts(exchange_text: str, facts: list[str]) -> list[str]:
     from . import config
     user = (f"## Exchange (ground truth)\n{exchange_text}\n\n## Candidate facts\n"
             + "\n".join(f"[{i}] {f}" for i, f in enumerate(facts)))
-    raw = _chat(VERIFY_SYSTEM, user, max_tokens=600, model=config.GATE_MODEL)
+    raw = _chat(VERIFY_SYSTEM, user, max_tokens=600, model=config.VERIFY_MODEL,
+                provider=config.VERIFY_PROVIDER or None)
     if raw is None:
         return facts
     try:
@@ -261,7 +286,8 @@ def extract_facts(exchange_text: str, near_facts: list[dict]) -> dict | None:
     near_block = "\n".join(f"[id {f['id']}] {f['content']}" for f in near_facts) or "(none)"
     user = (f"## Exchange\n{exchange_text}\n\n"
             f"## Existing nearby facts\n{near_block}")
-    raw = _chat(EXTRACT_SYSTEM, user, model=config.EXTRACT_MODEL)
+    raw = _chat(EXTRACT_SYSTEM, user, model=config.EXTRACT_MODEL,
+                provider=config.EXTRACT_PROVIDER or None)
     if raw is None:
         return None
     try:

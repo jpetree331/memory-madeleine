@@ -75,7 +75,8 @@ def assess(exchange_text: str) -> dict:
               f"<<<\n{exchange_text}\n>>>\n\n"
               f"Respond with the STRICT JSON verdict only.")
     raw = extractor._chat(GATE_SYSTEM, framed, max_tokens=400,
-                          model=config.GATE_MODEL)
+                          model=config.GATE_MODEL,
+                          provider=config.GATE_PROVIDER or None)
     if raw is None:
         return {"salience": 0.0, "register": None, "injection_risk": False,
                 "mode": None, "reasons": ["gate unavailable — facts-only default"]}
