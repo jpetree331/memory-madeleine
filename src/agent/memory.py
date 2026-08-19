@@ -84,6 +84,13 @@ def _extract_worker(exchange_id: int) -> None:
         # 1. The gate — salience AND sanitization, one judgment
         g = gate.assess(exchange_text)
 
+        # 1b. Dream boundary: when the gate names the mode DREAM, extraction
+        # is told so — dreamed events yield inner-state facts only.
+        if g.get("mode") == "dream":
+            exchange_text = ("[MODE: DREAM — the author was narratively "
+                            "rehearsing an imagined scene. Events inside the "
+                            "dream are not events.]\n") + exchange_text
+
         # 2. Injection risk: quarantined episode, NO facts, raw kept, loud log
         if g["injection_risk"]:
             trace = episodes.write_trace(exchange_text) or \
@@ -92,7 +99,8 @@ def _extract_worker(exchange_id: int) -> None:
                 ep_id = episodes.create(
                     conn, scope=row["scope"], trace=trace, register=g["register"],
                     salience=g["salience"], quarantined=True,
-                    exchange_id=exchange_id, occurred_at=row["occurred_at"])
+                    exchange_id=exchange_id, occurred_at=row["occurred_at"],
+                    mode=g.get("mode"))
                 gate.log_decision(conn, row["scope"], "quarantined", g,
                                   exchange_id, ep_id)
                 with conn.cursor() as cur:
@@ -113,7 +121,7 @@ def _extract_worker(exchange_id: int) -> None:
                         conn, scope=row["scope"], trace=trace.strip(),
                         register=g["register"], salience=g["salience"],
                         quarantined=False, exchange_id=exchange_id,
-                        occurred_at=row["occurred_at"])
+                        occurred_at=row["occurred_at"], mode=g.get("mode"))
             else:
                 logger.warning("trace generation failed for exchange %d — "
                                "facts proceed, episode skipped", exchange_id)

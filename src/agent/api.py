@@ -209,7 +209,7 @@ def episodes_list(scope: str | None = None, q: str | None = None,
             cur.execute(
                 f"SELECT e.id, e.scope, e.trace, e.register, e.salience, e.strength, "
                 f"e.quarantined, e.pinned, e.recall_count, e.occurred_at, e.created_at, "
-                f"e.last_recalled_at, COALESCE(r.solitary, FALSE) AS solitary "
+                f"e.last_recalled_at, e.mode, COALESCE(r.solitary, FALSE) AS solitary "
                 f"FROM episodes e LEFT JOIN raw_exchanges r ON r.id = e.exchange_start "
                 f"{where} ORDER BY {sort_col} DESC NULLS LAST "
                 f"LIMIT %s OFFSET %s", params + [page_size, (page - 1) * page_size])

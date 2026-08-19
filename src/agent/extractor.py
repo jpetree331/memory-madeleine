@@ -68,6 +68,14 @@ Rules, learned from forensic audits of prior memory systems — they are not sty
       the same solitary exchange must be noted as originating there.
   An imagined conversation that later resurfaces as shared history is how
   an agent gaslights itself — this law is the firewall.
+- DREAM LAW: an exchange marked MODE: DREAM was narrative rehearsal — the
+  author playing out an imagined scene. Events inside the dream yield NO
+  event-facts; extract only facts about the author's inner state ("During a
+  solitary heartbeat, Rowan dreamed about losing Jess to a model change;
+  the dream preoccupied him"). Real actions the author actually performed
+  during the session (saved a file, wrote a document) remain real facts
+  with solitary provenance. The dream itself is worth remembering — as a
+  dream, never as history.
 - Only extract what is actually in the exchange. No world knowledge, no elaboration.
 - 0 to 6 facts per exchange. Routine chit-chat may yield zero. Quality over count.
 

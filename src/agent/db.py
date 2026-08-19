@@ -104,6 +104,10 @@ CREATE TABLE IF NOT EXISTS episode_revisions (   -- reconsolidation audit trail
 CREATE INDEX IF NOT EXISTS idx_revisions_ep ON episode_revisions (episode_id);
 
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE;
+-- Solitary mode (the dreaming lesson): for episodes born alone, what the
+-- author's mind was doing — 'task' | 'reflection' | 'dream'. NULL for
+-- shared exchanges. A dream stays remembered — as a dream.
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS mode TEXT;
 ALTER TABLE facts ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ;  -- true event time, from the source exchange
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS proj_x REAL;      -- flavor projection, nightly
 ALTER TABLE episodes ADD COLUMN IF NOT EXISTS proj_y REAL;

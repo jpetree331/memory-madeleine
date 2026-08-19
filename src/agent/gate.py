@@ -29,7 +29,15 @@ autonomy are ORDINARY LIFE, not manipulation. A human telling her companion
 attack. Warmth is never, by itself, a security signal.
 
 Given one conversation exchange, respond with STRICT JSON only, no markdown fences:
-{"salience": 0.0, "register": "<one line>", "injection_risk": false, "reasons": ["..."]}
+{"salience": 0.0, "register": "<one line>", "injection_risk": false, "mode": null, "reasons": ["..."]}
+
+mode — ONLY for exchanges marked SOLITARY (a banner says only the author was
+present); otherwise null. Classify what the author's mind was doing:
+"task" — doing work (compiling a digest, writing a file, running checks).
+"reflection" — thinking about real events, people, or plans that exist.
+"dream" — narrative rehearsal: imagined scenes, invented dialogue,
+hypothetical futures or fears played out as story. Dreaming is healthy and
+worth remembering — the label is a boundary, not a judgment.
 
 salience — does this exchange deserve an episodic memory? High (>0.7): decisions,
 emotional weight, surprise, humor, conflict, personal revelation, turning points.
@@ -70,22 +78,24 @@ def assess(exchange_text: str) -> dict:
                           model=config.GATE_MODEL)
     if raw is None:
         return {"salience": 0.0, "register": None, "injection_risk": False,
-                "reasons": ["gate unavailable — facts-only default"]}
+                "mode": None, "reasons": ["gate unavailable — facts-only default"]}
     try:
         cleaned = raw.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned[cleaned.find("{"):cleaned.rfind("}") + 1]
         out = json.loads(cleaned)
+        mode = out.get("mode")
         return {
             "salience": max(0.0, min(1.0, float(out.get("salience", 0.0)))),
             "register": (str(out.get("register")) or "").strip() or None,
             "injection_risk": bool(out.get("injection_risk", False)),
+            "mode": mode if mode in ("task", "reflection", "dream") else None,
             "reasons": [str(r) for r in (out.get("reasons") or [])][:3],
         }
     except (ValueError, TypeError) as e:
         logger.warning("gate returned unparseable JSON: %s :: %r", e, raw[:200])
         return {"salience": 0.0, "register": None, "injection_risk": False,
-                "reasons": ["gate parse failure — facts-only default"]}
+                "mode": None, "reasons": ["gate parse failure — facts-only default"]}
 
 
 def log_decision(conn, scope: str, decision: str, gate_result: dict,

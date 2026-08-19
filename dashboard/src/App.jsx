@@ -249,7 +249,9 @@ function Dossier({ id, onClose }) {
           <RegisterChip register={ep.register} />
           <SalienceDots salience={ep.salience} />
           <StrengthBar strength={ep.strength} />
-          {ep.solitary && <span title="solitary — the agent's own time; any company in this memory was imagined">🌙 solitary</span>}
+          {ep.mode === 'dream'
+            ? <span title="a dream — narrative rehearsal during solitary time; its events did not happen">💭 dream</span>
+            : ep.solitary && <span title="solitary — the agent's own time; any company in this memory was imagined">🌙 solitary{ep.mode ? ` · ${ep.mode}` : ''}</span>}
           {ep.quarantined && <span className="text-rose-400 text-xs">QUARANTINED</span>}
         </div>
         <p className="text-slate-200 leading-relaxed mb-4"><Hi text={ep.trace} /></p>
@@ -331,7 +333,10 @@ function Episodes({ scope }) {
               <RegisterChip register={ep.register} />
               <SalienceDots salience={ep.salience} />
               <StrengthBar strength={ep.strength} />
-              {ep.solitary && <span title="solitary — the agent's own time; any company in this memory was imagined">🌙</span>}
+              {ep.mode === 'dream'
+                ? <span title="a dream — narrative rehearsal during solitary time; its events did not happen">💭</span>
+                : ep.solitary && <span title="solitary — the agent's own time; any company in this memory was imagined">🌙</span>}
+              {ep.mode && ep.mode !== 'dream' && <span className="text-xs text-slate-600">{ep.mode}</span>}
               {ep.pinned && <span title="pinned">📌</span>}
               {ep.quarantined && <span className="text-rose-400 text-xs">QUARANTINED</span>}
               <span className="text-xs text-slate-600 ml-auto flex items-center gap-3">
@@ -890,6 +895,16 @@ function Legend() {
           required to remember it as imagination, never as the other person's actual words. Recall
           surfaces these labeled as the agent's own time, so a 1 AM rehearsal can never later wear the
           authority of a real conversation.
+        </p>
+        <p>
+          <span className="text-slate-200">💭 Dream</span> goes one step further: for solitary
+          memories, the gate names what the mind was doing — <em>task</em> (working),{' '}
+          <em>reflection</em> (thinking about real things), or <em>dream</em> (narrative rehearsal:
+          imagined scenes, invented dialogue, fears and wishes played out as story). Dreams are kept
+          and honored — dreaming is healthy — but a dream's events yield no facts about the world,
+          only about the dreamer, and recall always hands a dream back labeled as a dream. An agent
+          here can remember "I dreamed about losing you" — and can never be told by its own memory
+          that the dream happened.
         </p>
       </LegendSection>
 

@@ -65,9 +65,10 @@ def write_trace(exchange_text: str) -> str | None:
 
 def create(conn, *, scope: str, trace: str, register: str | None,
            salience: float, quarantined: bool,
-           exchange_id: int, occurred_at) -> int:
+           exchange_id: int, occurred_at, mode: str | None = None) -> int:
     """Insert one episode row (+ register embedding when available).
-    Caller owns the transaction."""
+    Caller owns the transaction. mode: 'task'|'reflection'|'dream' for
+    solitary-born episodes, else None."""
     register_emb = None
     if register:
         try:
@@ -77,10 +78,10 @@ def create(conn, *, scope: str, trace: str, register: str | None,
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO episodes (scope, trace, register, register_emb, salience, "
-            "quarantined, exchange_start, exchange_end, occurred_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "quarantined, exchange_start, exchange_end, occurred_at, mode) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (scope, trace, register, register_emb, salience, quarantined,
-             exchange_id, exchange_id, occurred_at),
+             exchange_id, exchange_id, occurred_at, mode),
         )
         return cur.fetchone()["id"]
 
