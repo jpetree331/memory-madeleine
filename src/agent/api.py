@@ -425,11 +425,12 @@ def entities_list(scope: str | None = None, q: str | None = None, limit: int = 2
                   JOIN facts f ON f.id=e.src_id
                   WHERE TRUE {scope_f} {name_f}
                   GROUP BY en.id)
-                SELECT en.id, en.key, en.name, en.kind,
+                SELECT en.id, en.key, en.name, en.kind, tgt.name AS alias_target,
                        COALESCE(el.mentions, 0) + COALESCE(fl.mentions, 0) AS mentions,
                        LEAST(el.first_seen, fl.first_seen) AS first_seen,
                        GREATEST(el.last_seen, fl.last_seen) AS last_seen
                 FROM entities en
+                LEFT JOIN entities tgt ON tgt.id = en.alias_of
                 LEFT JOIN ep_leg el ON el.id=en.id
                 LEFT JOIN f_leg fl ON fl.id=en.id
                 WHERE COALESCE(el.mentions, 0) + COALESCE(fl.mentions, 0) > 0
@@ -446,8 +447,10 @@ def entity_dossier(entity_id: int, scope: str | None = None):
     p = [entity_id] + ([scope] if scope else [])
     with db.get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, key, name, kind, summary FROM entities "
-                        "WHERE id=%s", (entity_id,))
+            cur.execute("SELECT en.id, en.key, en.name, en.kind, en.summary, "
+                        "tgt.name AS alias_target FROM entities en "
+                        "LEFT JOIN entities tgt ON tgt.id = en.alias_of "
+                        "WHERE en.id=%s", (entity_id,))
             ent = cur.fetchone()
             if not ent:
                 raise HTTPException(404, "Entity not found")

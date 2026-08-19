@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS entities (
   summary TEXT
 );
 
+-- Alias link (Jess 2026-08-19: "Culurien is my gamer name — Culurien = Jess").
+-- An alias entity keeps its own name and mentions but points at its person.
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS alias_of INT REFERENCES entities(id);
+
 CREATE TABLE IF NOT EXISTS edges (
   id SERIAL PRIMARY KEY,
   src_kind TEXT NOT NULL, src_id INT NOT NULL,  -- 'episode' | 'entity' | 'fact'

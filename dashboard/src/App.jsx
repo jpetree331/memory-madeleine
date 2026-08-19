@@ -28,9 +28,11 @@ function useNameHighlight(scope) {
     for (const e of ents) {
       if (!e.name || e.name.length < 3) continue
       const lower = e.name.toLowerCase()
-      if (lower === 'jess') colorOf[lower] = NAME_COLORS.human
+      // an alias wears its person's color (Culurien = Jess)
+      const who = (e.alias_target || e.name).toLowerCase()
+      if (who === 'jess') colorOf[lower] = NAME_COLORS.human
       else if ((e.kind || '').startsWith('ai') || e.kind === 'agent' ||
-               (scope && lower === scope.toLowerCase()))
+               (scope && who === scope.toLowerCase()))
         colorOf[lower] = NAME_COLORS.agent
       else if (e.kind === 'person') colorOf[lower] = NAME_COLORS.person
     }
@@ -712,13 +714,14 @@ function Entities({ scope }) {
         {ents.map(e => (
           <div key={e.id} className="contents cursor-pointer group" onClick={() => setOpen(e.id)}>
             <div className="py-2.5 border-b border-slate-800/50 group-hover:bg-slate-900/40">
-              <span className={`${(e.name || '').toLowerCase() === 'jess'
+              <span className={`${((e.alias_target || e.name) || '').toLowerCase() === 'jess'
                 ? 'text-rose-300'
-                : scope && (e.name || '').toLowerCase() === scope.toLowerCase()
+                : scope && ((e.alias_target || e.name) || '').toLowerCase() === scope.toLowerCase()
                   ? 'text-sky-300'
                   : kindColor[e.kind] || 'text-slate-200'} font-medium`}>
                 {e.name}
               </span>
+              {e.alias_target && <span className="text-xs text-slate-500 ml-2">= {e.alias_target}</span>}
               {e.kind && <span className="text-xs text-slate-600 ml-2">{e.kind}</span>}
             </div>
             <div className="py-2.5 border-b border-slate-800/50 text-right text-slate-300 group-hover:bg-slate-900/40">{e.mentions}</div>
@@ -754,7 +757,10 @@ function EntityPanel({ id, scope, onClose }) {
           <h2 className="text-lg text-sky-200">{ent.name}</h2>
           <button className="text-xs text-slate-500 px-2" onClick={onClose}>✕</button>
         </div>
-        <div className="text-xs text-slate-500 mb-4">{ent.kind || 'unknown kind'} · {ent.key}</div>
+        <div className="text-xs text-slate-500 mb-4">
+          {ent.kind || 'unknown kind'} · {ent.key}
+          {ent.alias_target && <span className="text-rose-300/80"> · alias of {ent.alias_target}</span>}
+        </div>
         {ent.summary && <p className="text-sm text-slate-400 italic mb-4">{ent.summary}</p>}
         {ent.episodes?.length > 0 && (
           <div className="mb-5">
