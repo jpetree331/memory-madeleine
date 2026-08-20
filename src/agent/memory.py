@@ -94,8 +94,14 @@ def _extract_worker(exchange_id: int) -> None:
                 if prior:
                     prior_episode_id = prior["id"]
 
-        # 1. The gate — salience AND sanitization, one judgment
+        # 1. The gate — salience AND sanitization, one judgment.
+        # A dead gate door queues the exchange (None) — nothing may enter
+        # memory ungated, and nothing is lost by waiting.
         g = gate.assess(exchange_text)
+        if g is None:
+            logger.warning("gate door unavailable — exchange %d stays queued",
+                           exchange_id)
+            return
 
         # 1b. Dream boundary: when the gate names the mode DREAM, extraction
         # is told so — dreamed events yield inner-state facts only.

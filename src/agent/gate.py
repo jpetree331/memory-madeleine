@@ -78,8 +78,12 @@ def assess(exchange_text: str) -> dict:
                           model=config.GATE_MODEL,
                           provider=config.GATE_PROVIDER or None)
     if raw is None:
-        return {"salience": 0.0, "register": None, "injection_risk": False,
-                "mode": None, "reasons": ["gate unavailable — facts-only default"]}
+        # Door dead (subscription window, network): the caller must QUEUE the
+        # exchange, not process it gate-less. A transient blip and a 4-day
+        # outage are indistinguishable here, and 2026-08-20 proved outages
+        # silently strip episodes+verification from everything they touch
+        # (565 exchanges re-gated after the weekly sub limit died).
+        return None
     try:
         cleaned = raw.strip()
         if not cleaned.startswith("{") and "{" in cleaned:
