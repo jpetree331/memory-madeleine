@@ -301,12 +301,12 @@ def _chat(system: str, user: str, max_tokens: int = 1500,
     use_provider = provider or config.EXTRACTOR_PROVIDER
     try:
         if use_provider == "chutes":
-            out = _chat_chutes(system, user, use_model, max_tokens)
+            # Kimi Code primary (Jess 2026-08-20 4pm — Chutes about to burst cap);
+            # Chutes fallback when Kimi is slow or unreachable.
+            out = _chat_moonshot(system, user, max_tokens)
             if out is None:
-                # Burst cap or outage: Kimi Code takes over automatically
-                # (Jess 2026-08-20) so the ingest never simply stalls.
-                logger.info("chutes unavailable — falling through to Kimi Code")
-                out = _chat_moonshot(system, user, max_tokens)
+                logger.info("kimi unavailable — falling back to Chutes")
+                out = _chat_chutes(system, user, use_model, max_tokens)
             return out
         if use_provider == "claude-sdk":
             return _chat_claude_sdk(system, user, use_model)
