@@ -53,6 +53,16 @@ TRACE_PROVIDER = os.environ.get("TRACE_PROVIDER", "").strip()
 VERIFY_PROVIDER = os.environ.get("VERIFY_PROVIDER", "").strip()
 CHUTES_API_KEY = os.environ.get("CHUTES_API_KEY", "").strip()
 CHUTES_BASE_URL = os.environ.get("CHUTES_BASE_URL", "https://llm.chutes.ai/v1").strip()
+# Kimi Code (Moonshot) — the automatic understudy when Chutes hits its
+# 4-hour burst cap. Same brain family that passed the 2026-08-19 audit.
+MOONSHOT_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+MOONSHOT_BASE_URL = os.environ.get("MOONSHOT_BASE_URL",
+                                   "https://api.moonshot.ai/v1").strip()
+MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3").strip()
+# Hard ceiling on paid Anthropic spend (Jess budgeted $5, 2026-08-20).
+# The door refuses to call past it — a stopped ingest is recoverable,
+# an overdrawn account is not.
+ANTHROPIC_SPEND_CAP_USD = float(os.environ.get("ANTHROPIC_SPEND_CAP_USD", "4.50"))
 # Near-duplicate facts are skipped at insert above this cosine (0 disables)
 DEDUPE_THRESHOLD = float(os.environ.get("DEDUPE_THRESHOLD", "0.97"))
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()

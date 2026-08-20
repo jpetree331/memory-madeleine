@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
+import threading
 
 import httpx
 
@@ -164,24 +166,129 @@ def _chat_claude_sdk(system: str, user: str, model: str) -> str | None:
         return None
 
 
+_THINK_BLOCK = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.S)
+
+
 def _chat_chutes(system: str, user: str, model: str,
                  max_tokens: int = 1500) -> str | None:
     """The Chutes door (Jess's flat-rate sub): OpenAI-compatible endpoint,
-    open models (Kimi-K3 et al.). $0 marginal — headroom she already pays for."""
+    open models (Kimi-K3 et al.). $0 marginal — headroom she already pays for.
+
+    Reasoning-model aware (MEASURED 2026-08-19: Kimi-K3 spends most of a
+    Claude-sized budget thinking, truncating its JSON mid-string or emptying
+    it entirely): the budget is multiplied to leave room for thought, think
+    blocks are stripped from the visible answer, and empty content after a
+    full response is treated as failure, never as output."""
     if not config.CHUTES_API_KEY:
         logger.warning("chutes door: no CHUTES_API_KEY")
         return None
+    global _THINK_BLOCK
+    if _THINK_BLOCK is None:
+        import re as _re
+        _THINK_BLOCK = _re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", _re.S)
+    budget = max(max_tokens * 5, 4000)
     try:
-        with httpx.Client(timeout=180.0) as c:
+        with httpx.Client(timeout=300.0) as c:
             r = c.post(f"{config.CHUTES_BASE_URL}/chat/completions",
                        headers={"Authorization": f"Bearer {config.CHUTES_API_KEY}"},
-                       json={"model": model, "max_tokens": max_tokens,
+                       json={"model": model, "max_tokens": budget,
                              "messages": [{"role": "system", "content": system},
                                           {"role": "user", "content": user}]})
             r.raise_for_status()
-            return (r.json()["choices"][0]["message"].get("content") or "").strip()
+            msg = r.json()["choices"][0]["message"]
+            content = (msg.get("content") or "")
+            content = _THINK_BLOCK.sub("", content).strip()
+            if not content:
+                logger.warning("chutes door: empty visible content "
+                               "(reasoning consumed the budget?)")
+                return None
+            return content
     except Exception as e:
         logger.warning("chutes door failed: %s", e)
+        return None
+
+
+def _chat_moonshot(system: str, user: str, max_tokens: int = 1500) -> str | None:
+    """Kimi Code (Moonshot) — the understudy that takes over when Chutes hits
+    its 4-hour burst cap, so the ingest never simply stops."""
+    if not config.MOONSHOT_API_KEY:
+        return None
+    try:
+        with httpx.Client(timeout=300.0) as c:
+            r = c.post(f"{config.MOONSHOT_BASE_URL}/chat/completions",
+                       headers={"Authorization": f"Bearer {config.MOONSHOT_API_KEY}"},
+                       json={"model": config.MOONSHOT_MODEL,
+                             "max_tokens": max(max_tokens * 3, 3000),
+                             "messages": [{"role": "system", "content": system},
+                                          {"role": "user", "content": user}]})
+            r.raise_for_status()
+            content = (r.json()["choices"][0]["message"].get("content") or "")
+            if _THINK_BLOCK is not None:
+                content = _THINK_BLOCK.sub("", content)
+            return content.strip() or None
+    except Exception as e:
+        logger.warning("moonshot door failed: %s", e)
+        return None
+
+
+# Paid-spend ledger (Jess budgeted $5, 2026-08-20). Persisted because the
+# shepherd runs each pass in a fresh subprocess — an in-memory counter would
+# forget the bill every pass.
+_SPEND_LOCK = threading.Lock()
+_PRICE_PER_MTOK = {"in": 1.0, "out": 5.0}   # claude-haiku-4-5
+
+
+def _spend_path():
+    from pathlib import Path
+    p = Path(config.REPO_ROOT) / "data" / "spend.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def anthropic_spend_usd() -> float:
+    p = _spend_path()
+    if not p.exists():
+        return 0.0
+    total = 0.0
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            total += float(line.rsplit(" ", 1)[-1])
+        except ValueError:
+            continue
+    return total
+
+
+def _chat_anthropic(system: str, user: str, model: str,
+                    max_tokens: int) -> str | None:
+    """Paid Anthropic door, metered and capped. Returns None past the cap so
+    callers QUEUE the work (the gate's dead-door law) rather than lose it."""
+    spent = anthropic_spend_usd()
+    if spent >= config.ANTHROPIC_SPEND_CAP_USD:
+        logger.warning("anthropic spend cap reached ($%.2f) — door closed", spent)
+        return None
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        kwargs = {"model": model, "max_tokens": max_tokens,
+                  "messages": [{"role": "user", "content": user}]}
+        try:   # cached system prompt: the laws are re-sent on every call
+            msg = client.messages.create(
+                system=[{"type": "text", "text": system,
+                         "cache_control": {"type": "ephemeral"}}], **kwargs)
+        except Exception:
+            msg = client.messages.create(system=system, **kwargs)
+        u = getattr(msg, "usage", None)
+        if u:
+            cost = (getattr(u, "input_tokens", 0) * _PRICE_PER_MTOK["in"]
+                    + getattr(u, "output_tokens", 0) * _PRICE_PER_MTOK["out"]) / 1e6
+            with _SPEND_LOCK:
+                with open(_spend_path(), "a", encoding="utf-8") as f:
+                    f.write(f"{model} {getattr(u, 'input_tokens', 0)} "
+                            f"{getattr(u, 'output_tokens', 0)} {cost:.6f}\n")
+        return "".join(b.text for b in msg.content
+                       if getattr(b, "type", "") == "text")
+    except Exception as e:
+        logger.warning("anthropic door failed: %s", e)
         return None
 
 
@@ -193,19 +300,19 @@ def _chat(system: str, user: str, max_tokens: int = 1500,
     use_provider = provider or config.EXTRACTOR_PROVIDER
     try:
         if use_provider == "chutes":
-            return _chat_chutes(system, user, use_model, max_tokens)
+            out = _chat_chutes(system, user, use_model, max_tokens)
+            if out is None:
+                # Burst cap or outage: Kimi Code takes over automatically
+                # (Jess 2026-08-20) so the ingest never simply stalls.
+                logger.info("chutes unavailable — falling through to Kimi Code")
+                out = _chat_moonshot(system, user, max_tokens)
+            return out
         if use_provider == "claude-sdk":
             return _chat_claude_sdk(system, user, use_model)
         if use_provider == "claude-code":
             return _chat_claude_code(system, user)
         if use_provider == "anthropic" and config.ANTHROPIC_API_KEY:
-            import anthropic
-            client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-            msg = client.messages.create(
-                model=use_model, max_tokens=max_tokens,
-                system=system, messages=[{"role": "user", "content": user}],
-            )
-            return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+            return _chat_anthropic(system, user, use_model, max_tokens)
         key = config.OPENROUTER_API_KEY
         if not key:
             logger.warning("no extractor key available (provider=%s)", config.EXTRACTOR_PROVIDER)
