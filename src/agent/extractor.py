@@ -334,16 +334,41 @@ def _chat(system: str, user: str, max_tokens: int = 1500,
     use_model = model or config.EXTRACTOR_MODEL
     use_provider = provider or config.EXTRACTOR_PROVIDER
     try:
-        if use_provider == "chutes":
-            # Cline primary (Jess 2026-08-20 — Kimi Code direct wasn't
-            # working; Cline's gateway reaches Kimi-K3 instead), then Kimi
-            # Code, then Chutes as the last resort.
+        if use_provider == "openrouter":
+            # OpenRouter primary (Jess 2026-08-20 — cheapest at $0.000003 input,
+            # $0.000015 output for Kimi-K3), then Cline, Kimi Code, Chutes.
+            model = _OPENROUTER_MODEL_MAP.get(use_model, use_model)
+            key = config.OPENROUTER_API_KEY
+            if key:
+                try:
+                    with httpx.Client(timeout=120.0) as c:
+                        r = c.post("https://openrouter.ai/api/v1/chat/completions",
+                                   headers={"Authorization": f"Bearer {key}",
+                                            "HTTP-Referer": "http://localhost:8011",
+                                            "X-Title": "Madeleine"},
+                                   json={"model": model, "max_tokens": max_tokens,
+                                         "messages": [{"role": "system", "content": system},
+                                                      {"role": "user", "content": user}]})
+                        r.raise_for_status()
+                        out = (r.json()["choices"][0]["message"].get("content") or "").strip()
+                        if out:
+                            return out
+                except Exception as e:
+                    logger.info("openrouter unavailable (%s) — falling back to Cline", e)
             out = _chat_cline(system, user, max_tokens)
             if out is None:
                 logger.info("cline unavailable — falling back to Kimi Code")
                 out = _chat_moonshot(system, user, max_tokens)
             if out is None:
                 logger.info("kimi code unavailable — falling back to Chutes")
+                out = _chat_chutes(system, user, use_model, max_tokens)
+            return out
+        if use_provider == "chutes":
+            # Fallback chain for explicit chutes provider (rare now).
+            out = _chat_cline(system, user, max_tokens)
+            if out is None:
+                out = _chat_moonshot(system, user, max_tokens)
+            if out is None:
                 out = _chat_chutes(system, user, use_model, max_tokens)
             return out
         if use_provider == "claude-sdk":
