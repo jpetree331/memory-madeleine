@@ -8,6 +8,7 @@ module-per-concern pattern.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -89,6 +90,10 @@ class RecallReq(BaseModel):
     fact_budget_tokens: int | None = None
     assoc_budget_tokens: int | None = None
     mood_text: str | None = None       # cheap flavor: current register, colors recall
+    # Only surface memory older than this (EVENT time). A caller whose prompt
+    # already holds the recent turns passes the oldest timestamp it can still
+    # see, so recall complements the context window instead of echoing it.
+    occurred_before: datetime | None = None
     debug: bool = False
 
 
@@ -123,6 +128,7 @@ def recall(req: RecallReq):
                               fact_budget_tokens=req.fact_budget_tokens,
                               assoc_budget_tokens=req.assoc_budget_tokens,
                               mood_text=req.mood_text,
+                              occurred_before=req.occurred_before,
                               debug=req.debug)
 
 

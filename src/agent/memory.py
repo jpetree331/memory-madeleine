@@ -216,7 +216,8 @@ def _extract_worker(exchange_id: int) -> None:
 
 # ── Read path (phase 1: semantic facts) ────────────────────────────────────────
 
-def _nearest_facts(scope: str, query: str, k: int) -> list[dict]:
+def _nearest_facts(scope: str, query: str, k: int,
+                   occurred_before=None) -> list[dict]:
     try:
         qvec = embeddings.embed([query])[0]
     except Exception as e:
@@ -224,23 +225,30 @@ def _nearest_facts(scope: str, query: str, k: int) -> list[dict]:
         return []
     with _conn() as conn:
         with conn.cursor() as cur:
+            # occurred_at is EVENT time, not extraction time — the backfill
+            # wrote months of history in one afternoon, so created_at would
+            # filter out everything.
+            when = "" if occurred_before is None else                 " AND (occurred_at IS NULL OR occurred_at < %(before)s)"
             cur.execute(
-                "SELECT id, content, created_at, 1 - (embedding <=> %s::vector) AS similarity "
-                "FROM facts WHERE scope=%s AND status='active' AND embedding IS NOT NULL "
-                "ORDER BY embedding <=> %s::vector LIMIT %s",
-                (qvec, scope, qvec, k),
+                "SELECT id, content, created_at, 1 - (embedding <=> %(q)s::vector) AS similarity "
+                "FROM facts WHERE scope=%(s)s AND status='active' AND embedding IS NOT NULL"
+                + when +
+                " ORDER BY embedding <=> %(q)s::vector LIMIT %(k)s",
+                {"q": qvec, "s": scope, "k": k, "before": occurred_before},
             )
             return [dict(r) for r in cur.fetchall()]
 
 
 def recall(scope: str, query: str,
-           fact_budget_tokens: int | None = None) -> list[dict]:
+           fact_budget_tokens: int | None = None,
+           occurred_before=None) -> list[dict]:
     """Phase 1 only: top-k cosine on active facts in scope, greedy-packed to
     the token budget (~4 chars/token estimate). Returns [] on any failure —
     memory degrades, conversations continue."""
     budget = fact_budget_tokens or config.FACT_BUDGET_TOKENS
     try:
-        candidates = _nearest_facts(scope, query, _RECALL_CANDIDATES)
+        candidates = _nearest_facts(scope, query, _RECALL_CANDIDATES,
+                                    occurred_before=occurred_before)
     except Exception as e:
         logger.error("recall failed: %s", e)
         return []
@@ -260,6 +268,7 @@ def recall_full(scope: str, query: str,
                 fact_budget_tokens: int | None = None,
                 assoc_budget_tokens: int | None = None,
                 mood_text: str | None = None,
+                occurred_before=None,
                 debug: bool = False) -> dict:
     """Two-phase retrieval: facts (guaranteed budget) then spreading
     activation (smaller, optional budget). Associations are labeled and
@@ -270,7 +279,8 @@ def recall_full(scope: str, query: str,
     mood_text (cheap flavor): the caller's one-line description of the
     current register — episode ranking blends register-space similarity,
     so the mood of now colors what the past offers up."""
-    facts = recall(scope, query, fact_budget_tokens=fact_budget_tokens)
+    facts = recall(scope, query, fact_budget_tokens=fact_budget_tokens,
+                   occurred_before=occurred_before)
     associations: list[dict] = []
     debug_info = None
     mood_emb = None
@@ -284,6 +294,7 @@ def recall_full(scope: str, query: str,
             result = spread.spread(conn, scope, query, facts,
                                    assoc_budget_tokens=assoc_budget_tokens,
                                    mood_emb=mood_emb,
+                                   occurred_before=occurred_before,
                                    debug=debug)
         associations, debug_info = result if debug else (result, None)
     except Exception as e:

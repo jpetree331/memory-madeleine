@@ -80,7 +80,7 @@ def _conducting_episodes(conn, episode_ids: set[int], scope: str) -> dict[int, d
         return {}
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT e.id, e.scope, e.trace, e.register, e.register_emb, "
+            "SELECT e.id, e.scope, e.trace, e.register, e.register_emb, e.occurred_at, "
             "e.salience, e.strength, e.occurred_at, e.mode, "
             "COALESCE(r.solitary, FALSE) AS solitary FROM episodes e "
             "LEFT JOIN raw_exchanges r ON r.id = e.exchange_start "
@@ -93,6 +93,7 @@ def _conducting_episodes(conn, episode_ids: set[int], scope: str) -> dict[int, d
 def spread(conn, scope: str, query: str, fact_hits: list[dict],
            assoc_budget_tokens: int | None = None,
            mood_emb=None,
+           occurred_before=None,
            debug: bool = False) -> list[dict] | tuple[list[dict], dict]:
     """Run activation spread; return budget-packed associations
     (and the per-hop trace when debug=True — the Observatory's debugger).
@@ -151,6 +152,13 @@ def spread(conn, scope: str, query: str, fact_hits: list[dict],
         meta = episode_meta.get(node_id)
         if meta is None or meta["scope"] != scope:
             continue
+        # Outside-the-context-window rule: a caller that already has the
+        # recent turns in its prompt asks for only what it can no longer
+        # see, so memory adds instead of echoing.
+        if occurred_before is not None:
+            occ = meta.get("occurred_at")
+            if occ is not None and occ >= occurred_before:
+                continue
         rank = act * meta["salience"]
         mood_sim = None
         if mood_emb is not None and meta.get("register_emb") is not None:
