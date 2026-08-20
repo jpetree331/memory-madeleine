@@ -26,9 +26,12 @@ from . import config
 logger = logging.getLogger("madeleine.extractor")
 
 _OPENROUTER_MODEL_MAP = {
-    # OpenRouter slugs its models org-prefixed
+    # OpenRouter slugs its models org-prefixed (LIVE-CHECKED 2026-08-20: sonnet-4.5 doesn't exist, use 4.6)
     "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
-    "claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
+    "claude-sonnet-4.5": "anthropic/claude-sonnet-4.6",
+    # EXTRACT_MODEL/TRACE_MODEL carry Chutes' naming (moonshotai/Kimi-K3-TEE);
+    # OpenRouter's slug for the same model is lowercase, no -TEE suffix.
+    "moonshotai/Kimi-K3-TEE": "moonshotai/kimi-k3",
 }
 
 EXTRACT_SYSTEM = """You extract atomic facts from conversation exchanges for a long-term memory system.
@@ -337,24 +340,34 @@ def _chat(system: str, user: str, max_tokens: int = 1500,
         if use_provider == "openrouter":
             # OpenRouter primary (Jess 2026-08-20 — cheapest at $0.000003 input,
             # $0.000015 output for Kimi-K3), then Cline, Kimi Code, Chutes.
+            # Kimi-K3 is a reasoning model: budget padded (else "reasoning"
+            # eats it all and "content" comes back null, same failure mode
+            # already handled for the Chutes/Cline/Kimi-Code doors).
             model = _OPENROUTER_MODEL_MAP.get(use_model, use_model)
             key = config.OPENROUTER_API_KEY
-            if key:
+            if not key:
+                logger.warning("openrouter: no key")
+            else:
+                budget = max(max_tokens * 5, 4000)
                 try:
-                    with httpx.Client(timeout=120.0) as c:
+                    with httpx.Client(timeout=180.0) as c:
                         r = c.post("https://openrouter.ai/api/v1/chat/completions",
                                    headers={"Authorization": f"Bearer {key}",
                                             "HTTP-Referer": "http://localhost:8011",
                                             "X-Title": "Madeleine"},
-                                   json={"model": model, "max_tokens": max_tokens,
+                                   json={"model": model, "max_tokens": budget,
                                          "messages": [{"role": "system", "content": system},
                                                       {"role": "user", "content": user}]})
                         r.raise_for_status()
-                        out = (r.json()["choices"][0]["message"].get("content") or "").strip()
+                        content = r.json()["choices"][0]["message"].get("content") or ""
+                        if _THINK_BLOCK is not None:
+                            content = _THINK_BLOCK.sub("", content)
+                        out = content.strip()
                         if out:
                             return out
+                        logger.info("openrouter returned empty (reasoning ate the budget?)")
                 except Exception as e:
-                    logger.info("openrouter unavailable (%s) — falling back to Cline", e)
+                    logger.warning("openrouter door failed: %s", e)
             out = _chat_cline(system, user, max_tokens)
             if out is None:
                 logger.info("cline unavailable — falling back to Kimi Code")
