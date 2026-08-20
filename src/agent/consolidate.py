@@ -72,6 +72,12 @@ def _as_array(v) -> np.ndarray:
     Vector despite register_vector)."""
     if hasattr(v, "to_list"):
         return np.asarray(v.to_list(), dtype=np.float32)
+    if isinstance(v, str):
+        # Raw pgvector text form '[0.1,-0.2,...]' — arrives when the
+        # connection never ran register_vector (MEASURED 2026-08-20: the
+        # flavor_runner's own projection pass crashed on this, leaving
+        # 4371 flavored episodes with proj_x NULL and an empty atlas).
+        return np.fromstring(v.strip()[1:-1], sep=",", dtype=np.float32)
     return np.asarray(v, dtype=np.float32)
 
 
