@@ -59,6 +59,13 @@ MOONSHOT_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 MOONSHOT_BASE_URL = os.environ.get("MOONSHOT_BASE_URL",
                                    "https://api.moonshot.ai/v1").strip()
 MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3").strip()
+# Cline's gateway (Jess's new sub, 2026-08-20 — Kimi Code direct wasn't
+# working). LIVE-PROBED: api.cline.bot/api/v1, model strings need a
+# "modelType/model" shape ("moonshotai/kimi-k3" confirmed working), and the
+# response nests choices under data.choices, not top-level like OpenAI.
+CLINE_API_KEY = os.environ.get("CLINE_API_KEY", "").strip()
+CLINE_BASE_URL = os.environ.get("CLINE_BASE_URL", "https://api.cline.bot/api/v1").strip()
+CLINE_MODEL = os.environ.get("CLINE_MODEL", "moonshotai/kimi-k3").strip()
 # Optional ceiling on paid Anthropic spend. 0 (default) = NO CAP; the
 # ledger still records every call so spend stays visible either way.
 # Jess 2026-08-20: the $5 was her Opus budget, not Haiku's — ~$13 expected.

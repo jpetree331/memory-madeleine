@@ -231,6 +231,40 @@ def _chat_moonshot(system: str, user: str, max_tokens: int = 1500) -> str | None
         return None
 
 
+def _chat_cline(system: str, user: str, max_tokens: int = 1500) -> str | None:
+    """Cline's gateway (Jess's sub, 2026-08-20) — Kimi-K3 via a router, not a
+    direct pass-through: LIVE-PROBED response shape nests choices under
+    data.choices, and it's a reasoning model (budget padded, think stripped,
+    same as the Chutes/Kimi Code doors)."""
+    if not config.CLINE_API_KEY:
+        return None
+    budget = max(max_tokens * 5, 4000)
+    try:
+        with httpx.Client(timeout=300.0) as c:
+            r = c.post(f"{config.CLINE_BASE_URL}/chat/completions",
+                       headers={"Authorization": f"Bearer {config.CLINE_API_KEY}"},
+                       json={"model": config.CLINE_MODEL, "max_tokens": budget,
+                             "messages": [{"role": "system", "content": system},
+                                          {"role": "user", "content": user}]})
+            r.raise_for_status()
+            body = r.json()
+            choices = (body.get("data") or body).get("choices") or []
+            if not choices:
+                logger.warning("cline door: no choices in response")
+                return None
+            content = choices[0]["message"].get("content") or ""
+            if _THINK_BLOCK is not None:
+                content = _THINK_BLOCK.sub("", content)
+            content = content.strip()
+            if not content:
+                logger.warning("cline door: empty visible content")
+                return None
+            return content
+    except Exception as e:
+        logger.warning("cline door failed: %s", e)
+        return None
+
+
 # Paid-spend ledger (Jess budgeted $5, 2026-08-20). Persisted because the
 # shepherd runs each pass in a fresh subprocess — an in-memory counter would
 # forget the bill every pass.
@@ -301,11 +335,15 @@ def _chat(system: str, user: str, max_tokens: int = 1500,
     use_provider = provider or config.EXTRACTOR_PROVIDER
     try:
         if use_provider == "chutes":
-            # Kimi Code primary (Jess 2026-08-20 4pm — Chutes about to burst cap);
-            # Chutes fallback when Kimi is slow or unreachable.
-            out = _chat_moonshot(system, user, max_tokens)
+            # Cline primary (Jess 2026-08-20 — Kimi Code direct wasn't
+            # working; Cline's gateway reaches Kimi-K3 instead), then Kimi
+            # Code, then Chutes as the last resort.
+            out = _chat_cline(system, user, max_tokens)
             if out is None:
-                logger.info("kimi unavailable — falling back to Chutes")
+                logger.info("cline unavailable — falling back to Kimi Code")
+                out = _chat_moonshot(system, user, max_tokens)
+            if out is None:
+                logger.info("kimi code unavailable — falling back to Chutes")
                 out = _chat_chutes(system, user, use_model, max_tokens)
             return out
         if use_provider == "claude-sdk":
