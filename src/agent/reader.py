@@ -54,6 +54,12 @@ def vram_free_mb() -> int:
 
 
 def gpu_ready() -> bool:
+    # Already resident? Then the card is ours and no new allocation is
+    # needed. Checking free VRAM here counted our OWN 17 GB footprint as
+    # someone else's, so the runner napped forever after batch 1
+    # (2026-08-20: flavor stuck at 600/4402 in a 10-min retry loop).
+    if _model is not None:
+        return True
     free = vram_free_mb()
     if free < _VRAM_NEEDED_MB:
         logger.warning("reader skipped: %d MB free, %d needed — retry next window",
