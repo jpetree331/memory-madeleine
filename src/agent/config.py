@@ -59,10 +59,10 @@ MOONSHOT_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 MOONSHOT_BASE_URL = os.environ.get("MOONSHOT_BASE_URL",
                                    "https://api.moonshot.ai/v1").strip()
 MOONSHOT_MODEL = os.environ.get("MOONSHOT_MODEL", "kimi-k3").strip()
-# Hard ceiling on paid Anthropic spend (Jess budgeted $5, 2026-08-20).
-# The door refuses to call past it — a stopped ingest is recoverable,
-# an overdrawn account is not.
-ANTHROPIC_SPEND_CAP_USD = float(os.environ.get("ANTHROPIC_SPEND_CAP_USD", "4.50"))
+# Optional ceiling on paid Anthropic spend. 0 (default) = NO CAP; the
+# ledger still records every call so spend stays visible either way.
+# Jess 2026-08-20: the $5 was her Opus budget, not Haiku's — ~$13 expected.
+ANTHROPIC_SPEND_CAP_USD = float(os.environ.get("ANTHROPIC_SPEND_CAP_USD", "0"))
 # Near-duplicate facts are skipped at insert above this cosine (0 disables)
 DEDUPE_THRESHOLD = float(os.environ.get("DEDUPE_THRESHOLD", "0.97"))
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()

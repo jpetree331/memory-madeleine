@@ -262,10 +262,11 @@ def _chat_anthropic(system: str, user: str, model: str,
                     max_tokens: int) -> str | None:
     """Paid Anthropic door, metered and capped. Returns None past the cap so
     callers QUEUE the work (the gate's dead-door law) rather than lose it."""
-    spent = anthropic_spend_usd()
-    if spent >= config.ANTHROPIC_SPEND_CAP_USD:
-        logger.warning("anthropic spend cap reached ($%.2f) — door closed", spent)
-        return None
+    if config.ANTHROPIC_SPEND_CAP_USD > 0:
+        spent = anthropic_spend_usd()
+        if spent >= config.ANTHROPIC_SPEND_CAP_USD:
+            logger.warning("anthropic spend cap reached ($%.2f) — door closed", spent)
+            return None
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
