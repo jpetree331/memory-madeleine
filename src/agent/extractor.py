@@ -338,17 +338,16 @@ def _chat(system: str, user: str, max_tokens: int = 1500,
     use_provider = provider or config.EXTRACTOR_PROVIDER
     try:
         if use_provider == "openrouter":
-            # OpenRouter primary (Jess 2026-08-20 — cheapest at $0.000003 input,
-            # $0.000015 output for Kimi-K3), then Cline, Kimi Code, Chutes.
-            # Kimi-K3 is a reasoning model: budget padded (else "reasoning"
-            # eats it all and "content" comes back null, same failure mode
-            # already handled for the Chutes/Cline/Kimi-Code doors).
+            # OpenRouter primary. Kimi-K2.6, reasoning OFF (Jess 2026-08-20:
+            # K3's hidden reasoning billed as output tokens made real cost
+            # $0.045/exchange, ~15x the sticker price; K2.6 is ~6x cheaper
+            # on paper AND has no reasoning tax when explicitly disabled).
             model = _OPENROUTER_MODEL_MAP.get(use_model, use_model)
             key = config.OPENROUTER_API_KEY
             if not key:
                 logger.warning("openrouter: no key")
             else:
-                budget = max(max_tokens * 5, 4000)
+                budget = max(max_tokens * 3, 2000)
                 try:
                     with httpx.Client(timeout=180.0) as c:
                         r = c.post("https://openrouter.ai/api/v1/chat/completions",
@@ -356,6 +355,7 @@ def _chat(system: str, user: str, max_tokens: int = 1500,
                                             "HTTP-Referer": "http://localhost:8011",
                                             "X-Title": "Madeleine"},
                                    json={"model": model, "max_tokens": budget,
+                                         "reasoning": {"enabled": False},
                                          "messages": [{"role": "system", "content": system},
                                                       {"role": "user", "content": user}]})
                         r.raise_for_status()
