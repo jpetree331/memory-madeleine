@@ -185,7 +185,10 @@ def ingest_one(item):
                  f"rowan.messages:{item['message_id']}", item["occurred_at"],
                  item.get("private", False), item.get("solitary", False)))
             ex_id = cur.fetchone()["id"]
-    memory._extract_worker(ex_id)
+    # pair=False: this pool inserts rows concurrently and out of order, so the
+    # "next turn" a pair needs may not exist yet. Backfill stays one turn per
+    # episode (the behaviour every existing backfilled episode already has).
+    memory.extract_exchange(ex_id, pair=False)
     with db.get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT extracted_at IS NOT NULL AS ok FROM raw_exchanges "
@@ -256,7 +259,7 @@ def main():
     if queued:
         print(f"final sweep: retrying {len(queued)} queued extractions...")
         with ThreadPoolExecutor(max_workers=POOL) as ex:
-            list(ex.map(memory._extract_worker, queued))
+            list(ex.map(lambda i: memory.extract_exchange(i, pair=False), queued))
     print(f"DONE in {(time.time() - t0) / 3600:.1f}h — {completed} ingested. "
           f"Rowan's past is remembered.")
 

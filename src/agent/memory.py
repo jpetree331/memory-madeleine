@@ -54,8 +54,187 @@ def retain(scope: str, speaker: str, content: str,
                  speaker_name),
             )
             exchange_id = cur.fetchone()["id"]
-    threading.Thread(target=_extract_worker, args=(exchange_id,), daemon=True).start()
+    threading.Thread(target=_dispatch, args=(exchange_id,), daemon=True).start()
     return exchange_id
+
+
+# One episode per EXCHANGE — a turn plus the reply it drew. Only one process
+# serves Madeleine (uvicorn, no --workers), so an in-process claim is enough to
+# keep the reply's thread and the unanswered-turn timer from both extracting
+# the same rows. A restart drops the claims and the timers with them, which is
+# what sweep_queued() is for.
+_claim_lock = threading.Lock()
+_claimed: set[int] = set()
+
+
+def _claim(ids: list[int]) -> bool:
+    with _claim_lock:
+        if any(i in _claimed for i in ids):
+            return False
+        _claimed.update(ids)
+        return True
+
+
+def _release(ids: list[int]) -> None:
+    with _claim_lock:
+        _claimed.difference_update(ids)
+
+
+def _dispatch(exchange_id: int) -> None:
+    """Route one freshly-written row to extraction, pairing where it can.
+
+    A reply extracts immediately, taking its prompt with it. A turn that has
+    not been answered yet waits PAIR_TIMEOUT_SECONDS before going in alone —
+    in practice it never waits, because clients post both halves from the same
+    function about a second apart.
+    """
+    if not config.PAIR_EXCHANGES:
+        _extract_ids([exchange_id])
+        return
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM raw_exchanges WHERE id=%s", (exchange_id,))
+            row = cur.fetchone()
+            if not row:
+                return
+            partner = _pending_prompt(cur, row) if row["speaker"] == "agent" else None
+
+    if partner is not None:
+        _extract_ids([partner["id"], exchange_id])
+        return
+    if row["speaker"] == "agent":
+        _extract_ids([exchange_id])
+        return
+
+    # A prompt with no reply yet. Wait, then check again — the reply's thread
+    # may have taken it in the meantime, in which case this is a no-op.
+    threading.Timer(config.PAIR_TIMEOUT_SECONDS,
+                    _extract_if_unanswered, args=(exchange_id,)).start()
+
+
+def _pending_prompt(cur, reply: dict) -> dict | None:
+    """The turn this reply answers, if it is still waiting to be extracted.
+
+    Must be the immediately preceding row in the scope: if anything else has
+    been said since, this is not a clean pair and both halves are better off
+    standing alone than being stitched to the wrong partner.
+    """
+    cur.execute(
+        "SELECT * FROM raw_exchanges WHERE scope=%s AND id < %s "
+        "ORDER BY id DESC LIMIT 1", (reply["scope"], reply["id"]))
+    prev = cur.fetchone()
+    if not prev or prev["speaker"] != "user" or prev["extracted_at"] is not None:
+        return None
+    if bool(prev["solitary"]) != bool(reply["solitary"]):
+        return None          # different realities; never merge them
+    cur.execute(
+        "SELECT COALESCE(%s, %s) - COALESCE(%s, %s) <= make_interval(mins => %s) AS ok",
+        (reply["occurred_at"], reply["created_at"],
+         prev["occurred_at"], prev["created_at"], config.PAIR_WINDOW_MINUTES))
+    return prev if cur.fetchone()["ok"] else None
+
+
+def _extract_if_unanswered(exchange_id: int) -> None:
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT extracted_at FROM raw_exchanges WHERE id=%s",
+                        (exchange_id,))
+            row = cur.fetchone()
+            if not row or row["extracted_at"] is not None:
+                return
+            cur.execute("SELECT 1 FROM episodes WHERE exchange_start=%s "
+                        "OR exchange_end=%s LIMIT 1", (exchange_id, exchange_id))
+            if cur.fetchone():
+                return
+    _extract_ids([exchange_id])
+
+
+def _extract_ids(ids: list[int]) -> None:
+    if not _claim(ids):
+        return
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM raw_exchanges WHERE id = ANY(%s) "
+                            "ORDER BY id", (ids,))
+                rows = [dict(r) for r in cur.fetchall()]
+        if not rows or all(r["extracted_at"] is not None for r in rows):
+            return          # already done — a partner, a sweep, or a retry
+        _extract_worker(rows)
+    finally:
+        _release(ids)
+
+
+def extract_exchange(exchange_id: int, *, pair: bool = True) -> None:
+    """Extract one recorded exchange, synchronously. The entry point for
+    backfills and any other caller outside the live write path.
+
+    pair=False forces the pre-2026-08-21 behaviour of one turn per episode."""
+    if pair:
+        _dispatch_sync(exchange_id)
+    else:
+        _extract_ids([exchange_id])
+
+
+def sweep_queued(older_than_seconds: int | None = None, limit: int = 200) -> int:
+    """Extract rows that never got their turn — the restart safety net.
+
+    Two ways a row ends up here, and neither used to be picked up by anything:
+    an LLM door was down when it was written, or it was a prompt waiting for a
+    reply when the service stopped and its timer died with the process. Pairs
+    are reassembled the same way the live path does it, so a sweep and a live
+    write produce the same episode.
+    """
+    cutoff = config.PAIR_TIMEOUT_SECONDS if older_than_seconds is None \
+        else older_than_seconds
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM raw_exchanges WHERE extracted_at IS NULL "
+                "AND created_at < NOW() - make_interval(secs => %s) "
+                "ORDER BY id LIMIT %s", (cutoff, limit))
+            queued = [r["id"] for r in cur.fetchall()]
+    if not queued:
+        return 0
+    logger.info("sweep: %d queued exchange(s) to extract", len(queued))
+    done = 0
+    for xid in queued:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT extracted_at FROM raw_exchanges WHERE id=%s",
+                            (xid,))
+                r = cur.fetchone()
+        if not r or r["extracted_at"] is not None:
+            continue      # swept as somebody else's partner
+        _dispatch_sync(xid)
+        done += 1
+    return done
+
+
+def _dispatch_sync(exchange_id: int) -> None:
+    """Sweep-time routing: same pairing rules, but a prompt whose reply never
+    came is extracted now rather than waited on again."""
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM raw_exchanges WHERE id=%s", (exchange_id,))
+            row = cur.fetchone()
+            if not row:
+                return
+            if row["speaker"] == "user":
+                cur.execute("SELECT * FROM raw_exchanges WHERE scope=%s AND id > %s "
+                            "ORDER BY id LIMIT 1", (row["scope"], exchange_id))
+                nxt = cur.fetchone()
+                if (nxt and nxt["speaker"] == "agent"
+                        and nxt["extracted_at"] is None
+                        and bool(nxt["solitary"]) == bool(row["solitary"])):
+                    _extract_ids([exchange_id, nxt["id"]])
+                    return
+            else:
+                partner = _pending_prompt(cur, row)
+                if partner is not None:
+                    _extract_ids([partner["id"], exchange_id])
+                    return
+    _extract_ids([exchange_id])
 
 
 SOLITARY_BANNER = (
@@ -112,42 +291,105 @@ def _prior_turns(cur, row: dict) -> list[dict]:
     return list(reversed(cur.fetchall()))
 
 
+MACHINE_BANNER = (
+    "[MACHINE STIMULUS — the first turn below was delivered by a scheduled "
+    "job, not spoken by anyone. The job is a clock. It is not a person, has "
+    "no feelings, offers no company and wants none: never make it the subject "
+    "of a sentence, never give it an inner life, never record it as someone "
+    "the agent was with. What the AGENT thought, felt and did in response is "
+    "real experience and is remembered in full, with its texture — the prompt "
+    "is only the occasion for it, never its author or its companion.]\n")
+
+
 def _render_turn(r: dict, clip: int | None = None) -> str:
-    who = (r.get("speaker_name") or "").strip() or r["speaker"]
+    """One turn as the readers see it.
+
+    Machinery is rendered as a job label rather than a name, because a name in
+    the speaker slot is read as a person. MEASURED 2026-08-21: "cron: [Cron:
+    Gremlin Watch Digest]..." came back as "Alone, Cron rehearsed Jess's
+    presence, imagining her criteria" — a scheduled task given loneliness and
+    an imagination.
+    """
+    if config.is_machine_speaker(r.get("speaker_name")):
+        who = f"(automated {r['speaker_name'].strip().lower()} job)"
+    else:
+        who = (r.get("speaker_name") or "").strip() or r["speaker"]
     body = r["content"]
     if clip and len(body) > clip:
         body = body[:clip].rstrip() + " […]"
     return f"{who}: {body}"
 
 
-def _extract_worker(exchange_id: int) -> None:
-    """Full write pipeline for one raw exchange:
+def assemble_text(cur, rows: list[dict]) -> str:
+    """Exactly what gate, trace, extract and verify are shown for one exchange.
+
+    The single source of truth for framing. Any repair tool must call this
+    rather than rebuild it, or a rewritten memory stops matching the pipeline
+    that would have produced it — which is precisely what happened once
+    already: retrace_episodes.py grew its own copy, and pairing left it stale
+    within the hour.
+    """
+    prior = _prior_turns(cur, rows[0])
+    text = "\n".join(_render_turn(r) for r in rows)
+    if prior:
+        # Who "you" is. Without this the reply to a human reads as speech into
+        # an empty room — see _prior_turns for what that produced.
+        text = (CONTEXT_BANNER
+                + "\n".join(_render_turn(p, CONTEXT_CLIP) for p in prior)
+                + ANCHOR_BANNER + text)
+    if any(config.is_machine_speaker(r.get("speaker_name")) for r in rows):
+        text = MACHINE_BANNER + text
+    if any(r.get("solitary") for r in rows):
+        # One banner reaches every reader: gate, trace, extract, verify.
+        text = SOLITARY_BANNER + text
+    return text
+
+
+def is_bare_stimulus(rows: list[dict]) -> bool:
+    """A scheduled prompt the agent never answered. An instruction, not an
+    experience: remembering it produced "Alone, Cron rehearsed Jess's
+    presence" and two traces that were only the model's refusal token."""
+    return (any(config.is_machine_speaker(r.get("speaker_name")) for r in rows)
+            and all(r["speaker"] != "agent" for r in rows))
+
+
+def _source_ref(ids: list[int]) -> str:
+    """Fact provenance. A lone turn keeps the historical 'raw:123' form so
+    existing rows stay comparable; a pair records its span."""
+    return f"raw:{ids[0]}" if len(ids) == 1 else f"raw:{ids[0]}-{ids[-1]}"
+
+
+def _mark_extracted(ids: list[int]) -> None:
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE raw_exchanges SET extracted_at=NOW() "
+                        "WHERE id = ANY(%s)", (ids,))
+
+
+def _extract_worker(rows: list[dict]) -> None:
+    """Full write pipeline for one exchange — a turn and the reply it drew:
 
       gate → (quarantine short-circuit) → episode when salient → facts →
       entities + co-occurrence edges → gate_log
 
-    Failure at any LLM stage leaves the row queued (extracted_at IS NULL) —
-    visible, retryable, never fatal. Raw text is already durable."""
+    `rows` is the exchange in order: usually [prompt, reply], sometimes a lone
+    turn that was never answered. One episode comes out either way, spanning
+    exchange_start..exchange_end.
+
+    Failure at any LLM stage leaves the rows queued (extracted_at IS NULL) —
+    visible, retryable by sweep_queued(), never fatal. Raw text is durable."""
+    row = rows[0]                     # the exchange's anchor: scope, event time
+    ids = [r["id"] for r in rows]
+    exchange_id, end_id = ids[0], ids[-1]
     try:
+        if is_bare_stimulus(rows):
+            logger.info("machine stimulus %s had no agent response — "
+                        "recorded raw, no episode", ids)
+            _mark_extracted(ids)
+            return
         with _conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM raw_exchanges WHERE id=%s", (exchange_id,))
-                row = cur.fetchone()
-                if not row:
-                    return
-                prior = _prior_turns(cur, row)
-        # Name the mouth. A bare 'user:'/'agent:' forces the extractor to
-        # infer who spoke, and inference is where attribution rots.
-        exchange_text = _render_turn(row)
-        if prior:
-            # Who "you" is. Without this the reply to a human reads as speech
-            # into an empty room — see _prior_turns for what that produced.
-            exchange_text = (CONTEXT_BANNER
-                             + "\n".join(_render_turn(p, CONTEXT_CLIP) for p in prior)
-                             + ANCHOR_BANNER + exchange_text)
-        if row.get("solitary"):
-            # One banner reaches every reader: gate, trace, extract, verify.
-            exchange_text = SOLITARY_BANNER + exchange_text
+                exchange_text = assemble_text(cur, rows)
 
         # 0. Idempotence: a retry of an interrupted extraction (killed after
         # an episode insert but before the extracted_at stamp) must reuse
@@ -156,8 +398,11 @@ def _extract_worker(exchange_id: int) -> None:
         prior_episode_id = None
         with _conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id FROM episodes WHERE exchange_start=%s "
-                            "ORDER BY id LIMIT 1", (exchange_id,))
+                # Either end identifies the exchange: a half-written pair may
+                # have been recorded under just one of its rows.
+                cur.execute("SELECT id FROM episodes WHERE exchange_start = ANY(%s) "
+                            "OR exchange_end = ANY(%s) ORDER BY id LIMIT 1",
+                            (ids, ids))
                 prior = cur.fetchone()
                 if prior:
                     prior_episode_id = prior["id"]
@@ -187,15 +432,15 @@ def _extract_worker(exchange_id: int) -> None:
                     ep_id = episodes.create(
                         conn, scope=row["scope"], trace=trace, register=g["register"],
                         salience=g["salience"], quarantined=True,
-                        exchange_id=exchange_id, occurred_at=row["occurred_at"],
-                        mode=g.get("mode"))
+                        exchange_id=exchange_id, exchange_end=end_id,
+                        occurred_at=row["occurred_at"], mode=g.get("mode"))
                 else:
                     ep_id = prior_episode_id
                 gate.log_decision(conn, row["scope"], "quarantined", g,
                                   exchange_id, ep_id)
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE raw_exchanges SET extracted_at=NOW() WHERE id=%s",
-                                (exchange_id,))
+                    cur.execute("UPDATE raw_exchanges SET extracted_at=NOW() "
+                                "WHERE id = ANY(%s)", (ids,))
             logger.warning("QUARANTINED exchange %d (episode %d): %s",
                            exchange_id, ep_id, "; ".join(g["reasons"]))
             return
@@ -212,13 +457,17 @@ def _extract_worker(exchange_id: int) -> None:
                         conn, scope=row["scope"], trace=trace.strip(),
                         register=g["register"], salience=g["salience"],
                         quarantined=False, exchange_id=exchange_id,
-                        occurred_at=row["occurred_at"], mode=g.get("mode"))
+                        exchange_end=end_id, occurred_at=row["occurred_at"],
+                        mode=g.get("mode"))
             else:
                 logger.warning("trace generation failed for exchange %d — "
                                "facts proceed, episode skipped", exchange_id)
 
-        # 4. Facts (+ entities) — Sprint 1 path, now with episode provenance
-        near = _nearest_facts(row["scope"], row["content"], _NEAR_FACTS_FOR_SUPERSEDE)
+        # 4. Facts (+ entities) — Sprint 1 path, now with episode provenance.
+        # Supersede candidates are drawn from the whole exchange: the reply is
+        # usually where the correction lands ("Lab day was today actually!").
+        near = _nearest_facts(row["scope"], " ".join(r["content"] for r in rows),
+                              _NEAR_FACTS_FOR_SUPERSEDE)
         result = extractor.extract_facts(exchange_text, near)
         if result is None:
             logger.warning("extraction queued (extractor unavailable) for exchange %d", exchange_id)
@@ -254,7 +503,7 @@ def _extract_worker(exchange_id: int) -> None:
                         "INSERT INTO facts (scope, content, embedding, source_ref, "
                         "source_episode_id, occurred_at) VALUES (%s, %s, %s, %s, %s, %s) "
                         "RETURNING id",
-                        (row["scope"], text, vec, f"raw:{exchange_id}", episode_id,
+                        (row["scope"], text, vec, _source_ref(ids), episode_id,
                          row["occurred_at"]),
                     )
                     new_ids.append(cur.fetchone()["id"])
@@ -265,8 +514,8 @@ def _extract_worker(exchange_id: int) -> None:
                         "WHERE id=%s AND status='active'",
                         (new_ids[0] if new_ids else None, old_id),
                     )
-                cur.execute("UPDATE raw_exchanges SET extracted_at=NOW() WHERE id=%s",
-                            (exchange_id,))
+                cur.execute("UPDATE raw_exchanges SET extracted_at=NOW() "
+                            "WHERE id = ANY(%s)", (ids,))
             # 5. The snowflake grows: entities + co-occurrence edges
             linked = 0
             if episode_id is not None and result.get("entities"):
@@ -275,11 +524,12 @@ def _extract_worker(exchange_id: int) -> None:
             gate.log_decision(conn, row["scope"],
                               "episode" if episode_id else "facts_only",
                               g, exchange_id, episode_id)
-        logger.info("exchange %d: salience=%.2f episode=%s facts=%d entities=%d superseded=%d",
-                    exchange_id, g["salience"], episode_id, len(facts),
-                    linked, len(valid_supersede))
+        logger.info("exchange %s: salience=%.2f episode=%s facts=%d entities=%d "
+                    "superseded=%d", _source_ref(ids), g["salience"], episode_id,
+                    len(facts), linked, len(valid_supersede))
     except Exception as e:
-        logger.error("extract worker failed for exchange %d: %s", exchange_id, e)
+        logger.error("extract worker failed for exchange %s: %s",
+                     _source_ref(ids), e)
 
 
 # ── Read path (phase 1: semantic facts) ────────────────────────────────────────

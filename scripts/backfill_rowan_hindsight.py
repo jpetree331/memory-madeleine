@@ -185,7 +185,9 @@ def ingest_one(item):
                 (SCOPE, item["speaker"], item["content"], item["source_ref"],
                  item["occurred_at"], False, item.get("solitary", False)))
             ex_id = cur.fetchone()["id"]
-    memory._extract_worker(ex_id)
+    # pair=False — same reason as backfill_rowan.py: concurrent, out-of-order
+    # inserts mean a turn's partner may not be written yet.
+    memory.extract_exchange(ex_id, pair=False)
     return ex_id
 
 

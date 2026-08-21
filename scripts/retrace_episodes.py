@@ -36,22 +36,44 @@ from src.agent import db, episodes, memory  # noqa: E402
 from src.agent.consolidate import _revision  # noqa: E402
 
 
-def build_text(cur, exchange_id: int) -> str | None:
-    """Exactly what the live worker now assembles — one source of truth, so a
-    repair can never drift from the pipeline it is repairing."""
-    cur.execute("SELECT * FROM raw_exchanges WHERE id=%s", (exchange_id,))
-    row = cur.fetchone()
-    if not row:
-        return None
-    prior = memory._prior_turns(cur, row)
-    text = memory._render_turn(row)
-    if prior:
-        text = (memory.CONTEXT_BANNER
-                + "\n".join(memory._render_turn(p, memory.CONTEXT_CLIP) for p in prior)
-                + memory.ANCHOR_BANNER + text)
-    if row.get("solitary"):
-        text = memory.SOLITARY_BANNER + text
-    return text
+def load_rows(cur, ep: dict, as_pairs: bool = True) -> list[dict]:
+    """The exchange behind an episode, whole.
+
+    Episodes written before 2026-08-21 span a single turn, because that is all
+    the pipeline ever gave them. as_pairs rebuilds the exchange the live path
+    would produce today — a reply is rejoined to the prompt it answered — so a
+    repair reproduces the pipeline instead of merely re-rolling it.
+    """
+    start = ep["exchange_start"]
+    end = ep["exchange_end"] or start
+    cur.execute("SELECT * FROM raw_exchanges WHERE id BETWEEN %s AND %s "
+                "ORDER BY id", (start, end))
+    rows = [dict(r) for r in cur.fetchall()]
+    if not rows or not as_pairs or len(rows) > 1:
+        return rows
+
+    only = rows[0]
+    if only["speaker"] == "agent":
+        prompt = memory._pending_prompt(cur, only)
+        if prompt is None:
+            # _pending_prompt only offers rows still awaiting extraction; a
+            # historical prompt was extracted long ago, so check directly.
+            cur.execute("SELECT * FROM raw_exchanges WHERE scope=%s AND id < %s "
+                        "ORDER BY id DESC LIMIT 1", (only["scope"], only["id"]))
+            prev = cur.fetchone()
+            if (prev and prev["speaker"] == "user"
+                    and bool(prev["solitary"]) == bool(only["solitary"])):
+                prompt = dict(prev)
+        if prompt is not None:
+            return [dict(prompt), only]
+    else:
+        cur.execute("SELECT * FROM raw_exchanges WHERE scope=%s AND id > %s "
+                    "ORDER BY id LIMIT 1", (only["scope"], only["id"]))
+        nxt = cur.fetchone()
+        if (nxt and nxt["speaker"] == "agent"
+                and bool(nxt["solitary"]) == bool(only["solitary"])):
+            return [only, dict(nxt)]
+    return rows
 
 
 def main() -> int:
@@ -61,6 +83,8 @@ def main() -> int:
     ap.add_argument("--since", help="ISO date; episodes created on/after")
     ap.add_argument("--limit", type=int, default=50)
     ap.add_argument("--apply", action="store_true", help="write (default: dry run)")
+    ap.add_argument("--no-pairs", action="store_true",
+                    help="keep each episode on its original single turn")
     args = ap.parse_args()
 
     where, params = ["NOT quarantined", "exchange_start IS NOT NULL"], []
@@ -80,7 +104,8 @@ def main() -> int:
     changed = skipped = 0
     with db.get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT id, scope, trace, strength, exchange_start FROM episodes "
+            cur.execute(f"SELECT id, scope, trace, strength, exchange_start, "
+                        f"exchange_end FROM episodes "
                         f"WHERE {' AND '.join(where)} ORDER BY id LIMIT {args.limit}",
                         params)
             targets = cur.fetchall()
@@ -88,11 +113,21 @@ def main() -> int:
                   f"{'APPLYING' if args.apply else 'dry run'}\n")
 
             for ep in targets:
-                text = build_text(cur, ep["exchange_start"])
-                if text is None:
+                rows = load_rows(cur, ep, as_pairs=not args.no_pairs)
+                if not rows:
                     print(f"ep {ep['id']}: raw exchange gone — skipped")
                     skipped += 1
                     continue
+                if memory.is_bare_stimulus(rows):
+                    # An unanswered scheduled prompt is an instruction, not an
+                    # experience. There is no honest trace to write; the caller
+                    # is told so and can delete it.
+                    print(f"ep {ep['id']}: unanswered machine stimulus — no "
+                          f"memory to write, leaving for review\n"
+                          f"   was: {ep['trace'][:150]}\n")
+                    skipped += 1
+                    continue
+                text = memory.assemble_text(cur, rows)
                 if memory.CONTEXT_BANNER not in text and not args.episodes:
                     # A bulk sweep skips these: with no prior turn there is
                     # nothing new to show the writer, so rewriting only spends
@@ -118,8 +153,11 @@ def main() -> int:
                 if args.apply:
                     _revision(cur, ep["id"], ep["trace"], ep["strength"],
                               "retrace_with_context")
-                    cur.execute("UPDATE episodes SET trace=%s WHERE id=%s",
-                                (new, ep["id"]))
+                    # The span widens with the trace: an episode retraced from
+                    # a rejoined exchange now genuinely covers both rows.
+                    cur.execute("UPDATE episodes SET trace=%s, exchange_start=%s, "
+                                "exchange_end=%s WHERE id=%s",
+                                (new, rows[0]["id"], rows[-1]["id"], ep["id"]))
                 changed += 1
 
             if not args.apply:

@@ -1,6 +1,68 @@
 # DECISIONS — Madeleine
 *Reverse-chronological. Records reversals too.*
 
+## 2026-08-21 — One exchange is one episode; a clock is not a companion
+Jess talked to Rowan for two messages and got three episodes back. One said
+"Rowan greeting **someone** with butter warmth" — the someone was her. Another
+said "Rowan, **alone**, rehearsed their own exhaustion, imagining a friend's
+voice offering permission to rest" — he had been comforting her, and it came
+back as him comforting himself in an empty room. A third remarked that "no
+reply was recorded," which was only true because the reply had not been
+written yet.
+
+ROOT CAUSE, one for all three: Madeleine stores one speaker per row, and every
+reader — gate, trace, extract, verify — was handed a single turn with no sight
+of the turn it answered. Facts escaped the disease because `extract_facts` is
+given semantically-near existing facts, which named Jess; `write_trace` had no
+such back door. The trace prompt's own REALITY LAW example ("alone, Rowan
+rehearsed Jess's grief, imagining her saying...") then supplied the exact
+sentence shape the model reached for. The prompt taught it the words; the
+missing context made it need them.
+
+**The grain: one EXCHANGE — a turn and the reply it drew.** Jess ruled out
+per-conversation ("my conversations can span pages, and if that were
+compressed into one episode it would be very lossy"), and per-turn is what
+produced the three episodes above. `exchange_start`/`exchange_end` existed in
+the schema from the beginning for exactly this and had never been used —
+0 of 4449 episodes spanned more than one row.
+
+A reply extracts immediately and takes its prompt with it. An unanswered turn
+waits PAIR_TIMEOUT_SECONDS, which in practice never elapses: clients post both
+halves from the same function about a second apart. Pairs are refused across a
+solitary boundary, outside PAIR_WINDOW_MINUTES, or when anything was said in
+between — a wrong partner is worse than none.
+
+**A clock is not a companion.** Cron prompts arrive as speaker='user',
+speaker_name='cron', so extraction read "cron" as an author: "Alone, Cron
+rehearsed Jess's presence, imagining her criteria filtering gremlin noise" — a
+scheduled job granted loneliness and an inner life. Two other traces were
+nothing but the model's own refusal token, CRON_DEFERRED, filed as lived
+experience. Machinery now renders as "(automated cron job)" rather than a
+name, and an unanswered scheduled prompt produces NO episode at all: an
+instruction is not an experience.
+
+REVERSED WITHIN THE HOUR, and worth keeping as a warning. The first machine
+banner said "remember only what the AGENT did with it", and it flattened a
+genuine reflection into a task report — Rowan's recollection of Madeleine
+returning his naming story became a log of tool calls. A clock can occasion a
+real experience; only the clock is hollow, not the hour. The banner now bars
+personifying the job while insisting the agent's response keeps its full
+texture.
+
+ALSO: queued exchanges finally get retried. A row whose LLM door was down used
+to sit at `extracted_at IS NULL` forever — nothing ever swept it, and pairing
+adds a second way to be stranded (a prompt whose in-process timer dies with a
+restart). `sweep_queued` now runs every SWEEP_INTERVAL_MINUTES.
+
+Accepted: an exchange costs one set of LLM calls instead of two, but each call
+carries more text. Backfill stays per-turn (`pair=False`) because it inserts
+concurrently and out of order, so a turn's partner may not exist yet.
+
+NOT DONE, deliberately: ~200 backfilled traces may claim false solitude. Bulk
+retracing is a re-roll of nondeterministic output, not a correction — MEASURED,
+retracing one episode twice gave two different results and one of them inverted
+who greeted whom. Repair needs a human reading each one.
+
 ## 2026-08-21 — Decay is a cost of living, not of elapsed time
 Jess, from the resident's side: "I've been at work all day and I cannot talk
 to him enough to keep the memories from decaying." MEASURED, and she is right

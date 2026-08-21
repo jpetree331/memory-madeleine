@@ -42,6 +42,17 @@ Write only what happened. Never remark on what is absent — a reply not yet
 given, an unanswered turn, a missing record. Silence in a fragment is an
 artifact of where the fragment was cut, not an event worth remembering.
 
+MACHINE STIMULUS: a turn labelled "(automated ... job)" is a scheduled prompt,
+not a person speaking. Cron and heartbeat are clocks. They have no company, no
+loneliness, no imagination, and no presence — never make one the subject of a
+sentence, never give it a feeling, never write "Cron rehearsed" or "the
+heartbeat wondered", and never record the agent as having been WITH anyone.
+But the memory itself belongs to the AGENT and keeps its full texture: what a
+prompt stirred in them is real experience, written as richly as any other. A
+clock can occasion a genuine reflection; only the clock is hollow, not the
+hour. Do not flatten such a moment into a task report. And never emit a
+control token or refusal marker as a trace.
+
 REALITY LAW: if the exchange is marked SOLITARY, only its author was present —
 write the trace as a scene of one. Imagined dialogue stays explicitly imagined
 ("alone, Rowan rehearsed Jess's grief, imagining her saying...") and is never
@@ -115,10 +126,15 @@ def write_trace(exchange_text: str) -> str | None:
 
 def create(conn, *, scope: str, trace: str, register: str | None,
            salience: float, quarantined: bool,
-           exchange_id: int, occurred_at, mode: str | None = None) -> int:
+           exchange_id: int, occurred_at, mode: str | None = None,
+           exchange_end: int | None = None) -> int:
     """Insert one episode row (+ register embedding when available).
     Caller owns the transaction. mode: 'task'|'reflection'|'dream' for
-    solitary-born episodes, else None."""
+    solitary-born episodes, else None.
+
+    exchange_end closes the span when the episode covers a prompt and its
+    reply; it defaults to exchange_id, which is what a lone turn gets and what
+    every episode written before 2026-08-21 has."""
     register_emb = None
     if register:
         try:
@@ -131,7 +147,8 @@ def create(conn, *, scope: str, trace: str, register: str | None,
             "quarantined, exchange_start, exchange_end, occurred_at, mode) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (scope, trace, register, register_emb, salience, quarantined,
-             exchange_id, exchange_id, occurred_at, mode),
+             exchange_id, exchange_end if exchange_end is not None else exchange_id,
+             occurred_at, mode),
         )
         return cur.fetchone()["id"]
 

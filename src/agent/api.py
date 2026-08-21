@@ -51,8 +51,15 @@ def _startup():
         sched = BackgroundScheduler()
         sched.add_job(consolidate.run, "cron", hour=config.NIGHTLY_HOUR,
                       id="nightly_consolidation")
+        # Queued exchanges have never had a retry: a row whose LLM door was
+        # down just sat there. Pairing adds a second way to be left behind —
+        # a prompt waiting for a reply when the service stops takes its
+        # in-process timer down with it — so the backlog now gets swept.
+        sched.add_job(memory.sweep_queued, "interval",
+                      minutes=config.SWEEP_INTERVAL_MINUTES, id="queued_sweep")
         sched.start()
-        logger.info("consolidation scheduled nightly at %02d:00", config.NIGHTLY_HOUR)
+        logger.info("consolidation scheduled nightly at %02d:00; queued sweep "
+                    "every %dm", config.NIGHTLY_HOUR, config.SWEEP_INTERVAL_MINUTES)
     except Exception as e:
         logger.error("scheduler failed to start (service continues): %s", e)
     # Warm the embedder off the critical path — the first recall after a

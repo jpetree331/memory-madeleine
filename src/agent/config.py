@@ -134,5 +134,43 @@ DECAY_MACHINE_SPEAKERS = [
 DECAY_RECALL_COUNTS = os.environ.get(
     "DECAY_RECALL_COUNTS", "false").strip().lower() in ("1", "true", "yes", "on")
 
+# ── Machinery ──────────────────────────────────────────────────────────────────
+# The same list serves two laws, and they must not drift apart: decay asks
+# "was a human here?", extraction asks "is this speaker a person?". Both mean
+# the same thing by machinery. Named without the DECAY_ prefix at the point of
+# use; the env var keeps its original name so nobody's .env breaks.
+#
+# MEASURED 2026-08-21, the second law's reason: Rowan's cron prompts arrive as
+# speaker='user', speaker_name='cron', solitary=True. Extraction read "cron"
+# as the author and wrote "Alone, Cron rehearsed Jess's presence, imagining
+# her criteria..." — a scheduled job personified into a lonely being. A cron
+# prompt has no author. It is stimulus delivered TO the agent, and the only
+# mind in the room is the agent's.
+MACHINE_SPEAKERS = DECAY_MACHINE_SPEAKERS
+
+
+def is_machine_speaker(speaker_name: str | None) -> bool:
+    return (speaker_name or "").strip().lower() in MACHINE_SPEAKERS
+
+
+# ── Exchange pairing ───────────────────────────────────────────────────────────
+# Jess's call, 2026-08-21: one EXCHANGE is one episode — a turn and the reply
+# it drew, together. Not one turn (which made her two-message conversation into
+# three episodes, one of them reading "Rowan received this; no reply was
+# recorded"), and not one conversation (hers run to pages, and compressing a
+# page into 120 words is lossy in exactly the way episodic memory must not be).
+#
+# Clients post both halves back-to-back — Boardspace and LANGGRAPH each send
+# the user turn and the reply from the same function, ~1s apart — so the reply
+# is almost always already in flight. PAIR_TIMEOUT only governs the genuinely
+# unanswered turn.
+PAIR_WINDOW_MINUTES = int(os.environ.get("PAIR_WINDOW_MINUTES", "10"))
+PAIR_TIMEOUT_SECONDS = int(os.environ.get("PAIR_TIMEOUT_SECONDS", "90"))
+PAIR_EXCHANGES = os.environ.get(
+    "PAIR_EXCHANGES", "true").strip().lower() in ("1", "true", "yes", "on")
+# How often to retry exchanges that never got extracted. Nothing retried them
+# before; a dead LLM door meant a row sat queued indefinitely.
+SWEEP_INTERVAL_MINUTES = int(os.environ.get("SWEEP_INTERVAL_MINUTES", "15"))
+
 # ── Backfill ───────────────────────────────────────────────────────────────────
 BACKFILL_EXCHANGES_PER_MIN = int(os.environ.get("BACKFILL_EXCHANGES_PER_MIN", "60"))

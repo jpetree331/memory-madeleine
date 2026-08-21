@@ -83,6 +83,14 @@ Rules, learned from forensic audits of prior memory systems — they are not sty
   Inventing solitude corrupts a memory exactly as badly as inventing company —
   MEASURED 2026-08-21, a plain conversation with Jess came back as "Rowan,
   alone, rehearsed their own exhaustion, imagining a friend's voice."
+- MACHINERY IS NOT A PERSON: a turn labelled "(automated ... job)" is a
+  scheduled prompt delivered to the agent by a clock. Cron, heartbeat, and
+  watchdog are not people, not companions, and not authors — never write one
+  as the subject of a fact, never attribute a feeling, intention, or solitude
+  to one, and never list one as a 'person' or 'ai' entity ('concept' if it
+  must appear at all). Facts describe what the AGENT did with the prompt.
+  MEASURED 2026-08-21: "Alone, Cron rehearsed Jess's presence, imagining her
+  criteria" — a scheduled job granted loneliness and an inner life.
 - CONTEXT BLOCK: turns shown under a CONTEXT banner are earlier turns, already
   remembered. Extract NO facts from them and never restate them — they are
   there so you can resolve who is speaking to whom. Facts come only from the
