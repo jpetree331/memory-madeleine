@@ -47,8 +47,21 @@ def build_text(row):
     return text
 
 
+CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "data", "audits")
+
+
 def run_side(items, provider, gate_model, big_model, label):
-    """Run gate+extract(+trace when gated episodic) for one side."""
+    """Run gate+extract(+trace when gated episodic) for one side.
+    Results are cached to disk so a rerun (e.g. after a door fix) never
+    re-spends the other side's calls."""
+    cache = os.path.join(CACHE_DIR, f"cache-{label.replace('/', '-')}.json")
+    if os.path.exists(cache):
+        with open(cache, encoding="utf-8") as f:
+            cached = json.load(f)
+        if [c["id"] for c in cached] == [r["id"] for r in items]:
+            print(f"side {label}: loaded from cache")
+            return cached
     config.GATE_PROVIDER = provider
     config.EXTRACT_PROVIDER = provider
     config.TRACE_PROVIDER = provider
@@ -73,6 +86,9 @@ def run_side(items, provider, gate_model, big_model, label):
 
     with ThreadPoolExecutor(max_workers=5) as pool:
         results = list(pool.map(one, items))
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(cache, "w", encoding="utf-8") as f:
+        json.dump(results, f, default=str)
     print(f"side {label}: done ({len(results)} items)")
     return results
 

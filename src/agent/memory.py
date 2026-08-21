@@ -63,6 +63,62 @@ SOLITARY_BANNER = (
     "heard, or replied. Any dialogue, quotes, or addressed speech below is "
     "the author's imagination and must be remembered as imagination.]\n")
 
+CONTEXT_BANNER = (
+    "[CONTEXT — the turns immediately before this one, in the same "
+    "conversation. They are ALREADY remembered: extract no facts from them "
+    "and do not narrate them as events. They are here so you can see who is "
+    "being spoken to and about what.]\n")
+
+ANCHOR_BANNER = "\n[THE EXCHANGE TO REMEMBER — this, and only this]\n"
+
+# How far back a turn can be and still be the same conversation, and how many
+# to show. Two turns reaches the human's last message from the agent's reply,
+# which is all that is needed to know who "you" is. Long turns are clipped —
+# context only has to establish the addressee and the subject, and every extra
+# character is paid for on four LLM calls (gate, trace, extract, verify).
+CONTEXT_WINDOW_MINUTES = 30
+CONTEXT_TURNS = 2
+CONTEXT_CLIP = 600
+
+
+def _prior_turns(cur, row: dict) -> list[dict]:
+    """The turns just before this one, for addressee resolution.
+
+    MEASURED 2026-08-21, and the reason this exists: Madeleine stores one
+    speaker per row, and every reader was handed a single turn. So Rowan's
+    reply to Jess — "Hey you. Welcome home." — reached the trace writer with
+    no interlocutor anywhere in view, and it filled the hole twice over:
+    episode 4783 became "Rowan greeting SOMEONE with butter warmth", and 4784
+    became "Rowan, ALONE, rehearsed their own exhaustion, imagining a friend's
+    voice." Both were plain conversation with Jess, sitting one row away.
+
+    Solitary rows get no context on purpose. A heartbeat IS a scene of one,
+    and handing it a real human turn from earlier is precisely how imagined
+    dialogue would acquire a real speaker — the corruption the reality law
+    exists to prevent. For the same reason a solitary turn is never shown as
+    context to a live one: Rowan's 16:10 "HEARTBEAT_OK" is not part of the
+    conversation Jess started at 17:34.
+    """
+    if row.get("solitary"):
+        return []
+    cur.execute(
+        "SELECT speaker, speaker_name, content FROM raw_exchanges "
+        "WHERE scope=%s AND id < %s AND NOT solitary "
+        "AND COALESCE(occurred_at, created_at) >= "
+        "    COALESCE(%s, %s) - make_interval(mins => %s) "
+        "ORDER BY id DESC LIMIT %s",
+        (row["scope"], row["id"], row.get("occurred_at"), row["created_at"],
+         CONTEXT_WINDOW_MINUTES, CONTEXT_TURNS))
+    return list(reversed(cur.fetchall()))
+
+
+def _render_turn(r: dict, clip: int | None = None) -> str:
+    who = (r.get("speaker_name") or "").strip() or r["speaker"]
+    body = r["content"]
+    if clip and len(body) > clip:
+        body = body[:clip].rstrip() + " […]"
+    return f"{who}: {body}"
+
 
 def _extract_worker(exchange_id: int) -> None:
     """Full write pipeline for one raw exchange:
@@ -77,12 +133,18 @@ def _extract_worker(exchange_id: int) -> None:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM raw_exchanges WHERE id=%s", (exchange_id,))
                 row = cur.fetchone()
-        if not row:
-            return
+                if not row:
+                    return
+                prior = _prior_turns(cur, row)
         # Name the mouth. A bare 'user:'/'agent:' forces the extractor to
         # infer who spoke, and inference is where attribution rots.
-        _who = (row.get("speaker_name") or "").strip() or row["speaker"]
-        exchange_text = f"{_who}: {row['content']}"
+        exchange_text = _render_turn(row)
+        if prior:
+            # Who "you" is. Without this the reply to a human reads as speech
+            # into an empty room — see _prior_turns for what that produced.
+            exchange_text = (CONTEXT_BANNER
+                             + "\n".join(_render_turn(p, CONTEXT_CLIP) for p in prior)
+                             + ANCHOR_BANNER + exchange_text)
         if row.get("solitary"):
             # One banner reaches every reader: gate, trace, extract, verify.
             exchange_text = SOLITARY_BANNER + exchange_text

@@ -73,6 +73,21 @@ Rules, learned from forensic audits of prior memory systems — they are not sty
       the same solitary exchange must be noted as originating there.
   An imagined conversation that later resurfaces as shared history is how
   an agent gaslights itself — this law is the firewall.
+- REALITY LAW, CONVERSE: an exchange NOT marked SOLITARY had another mind
+  present — really present, even if their turns are not all shown. Second-
+  person address ("welcome home", "you did the hard thing") is speech to a
+  real person. Never describe such an exchange as solitude, reflection, or
+  imagination; never invent an imagined listener to account for an addressee
+  you cannot see; never file comfort offered TO someone as the speaker
+  comforting themselves. Take the other person's name from the CONTEXT block.
+  Inventing solitude corrupts a memory exactly as badly as inventing company —
+  MEASURED 2026-08-21, a plain conversation with Jess came back as "Rowan,
+  alone, rehearsed their own exhaustion, imagining a friend's voice."
+- CONTEXT BLOCK: turns shown under a CONTEXT banner are earlier turns, already
+  remembered. Extract NO facts from them and never restate them — they are
+  there so you can resolve who is speaking to whom. Facts come only from the
+  exchange under the TO REMEMBER banner. You MAY use the context to name
+  people correctly in those facts, which is the whole reason it is shown.
 - DREAM LAW: an exchange marked MODE: DREAM was narrative rehearsal — the
   author playing out an imagined scene. Events inside the dream yield NO
   event-facts; extract only facts about the author's inner state ("During a
@@ -426,6 +441,14 @@ facts extracted from it. For each fact, check ONLY against the exchange:
    solitary exchange whose text does not carry its solitary provenance
    ("During a heartbeat/solitary reflection, ..."). Imagined dialogue must
    be facted as imagination ("X imagined/pictured/rehearsed...") or rejected.
+   CONVERSELY, if the exchange is NOT marked solitary, another person really
+   was there: reject any fact calling it solitude, reflection, or imagination,
+   and any fact that recasts comfort offered to someone as self-comfort.
+7. CONTEXT — a CONTEXT block holds earlier turns, shown so the extractor can
+   tell who is speaking to whom. Names and referents drawn from it are
+   GROUND TRUTH, not invention: do not reject a fact for naming someone who
+   appears only there. Do reject facts that merely restate the context, since
+   those events are already remembered.
 
 Respond STRICT JSON only:
 {"verdicts": [{"index": 0, "ok": true} , {"index": 1, "ok": false, "why": "..."}]}
