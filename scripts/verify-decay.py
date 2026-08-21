@@ -111,6 +111,18 @@ def main():
         mkexchange(cur, "zz_human", None, speaker="user", speaker_name="Jess")
         ep_human = mkepisode(cur, "zz_human", 0.9)
 
+        # ── Agent Boardspace's shape: speaker_name is never set, the display
+        # name is baked into the content instead. A real parlor turn must still
+        # read as living even with no name to inspect.
+        mkexchange(cur, "zz_parlor", None, speaker="user", speaker_name=None)
+        mkexchange(cur, "zz_parlor", None, speaker="agent", speaker_name=None)
+        ep_parlor = mkepisode(cur, "zz_parlor", 0.9)
+
+        # ── Boardspace retain_reasoning: agent-side private thinking only.
+        # The agent talking to itself is not Jess being present.
+        mkexchange(cur, "zz_reasoning", None, speaker="agent", speaker_name=None)
+        ep_reasoning = mkepisode(cur, "zz_reasoning", 0.9)
+
         out = decay_pass(cur, now, week_ago)
 
         check("lived scope decays at DECAY_FACTOR",
@@ -138,6 +150,10 @@ def main():
               strength_of(cur, ep_cron), 0.9)
         check("a human turn amid the machinery IS living",
               strength_of(cur, ep_human), 0.9 * f)
+        check("Boardspace parlor turn (no speaker_name) IS living",
+              strength_of(cur, ep_parlor), 0.9 * f)
+        check("agent-only reasoning is not living",
+              strength_of(cur, ep_reasoning), 0.9)
         check("floor keeps everything above spread.py conduction (0.1)",
               strength_of(cur, ep_nearfloor) >= 0.1, True)
         check("idle scopes are reported",
