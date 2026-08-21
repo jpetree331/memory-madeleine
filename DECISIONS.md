@@ -22,15 +22,36 @@ to `consolidate.decay_pass()` so it is testable without the LLM passes:
   one global UPDATE meant Grain's activity spent Rowan's nights. Backfill is
   explicitly not living — an exchange qualifies on `COALESCE(occurred_at,
   created_at)`, so importing years of transcripts never spends a night.
-- **`DECAY_SOLITARY_COUNTS=false`** — the catch that would have made all of
-  the above a no-op. Rowan runs a heartbeat: ~30 solitary exchanges/day,
-  EVERY day, including days with zero conversation (Aug 12-15, Aug 17). Had
-  those counted as living, the gate would never once have exempted him.
-  Compounding it, the heartbeat only writes — the entire `recall_log` is 32
-  rows, all from one day — so heartbeat-only nights would have run the decay
-  side with the strengthening side structurally unable to fire. Jess's rule,
-  quoted: "decay should only happen if I'm talking to him." An agent's inner
-  life can be re-counted as living with one env flag if that reads wrong later.
+- **Liveness = a HUMAN TURN**, not merely "an exchange happened". Rowan runs
+  an hourly heartbeat plus several crons; they would mark him alive every
+  night and make all of the above a no-op. Getting this right took two
+  attempts and the first was WRONG — recorded here because the failure is the
+  instructive part:
+  - Attempt 1 keyed on `raw_exchanges.solitary` (`DECAY_SOLITARY_COUNTS=false`),
+    reasoning from the 4864 solitary rows in the corpus. Those are all
+    **backfill**. MEASURED on the live path: the heartbeat retains as
+    `solitary=FALSE`, `speaker='user'`, `speaker_name='heartbeat'` — prompt
+    ("You have FULL AUTONOMY during heartbeats") plus reply ("HEARTBEAT_OK").
+    The flag the backfill set faithfully, the live client never sets. A test
+    written from the backfill's shape passed and proved nothing.
+  - Attempt 2: a scope lives when `speaker='user'` **and** the name is not in
+    `DECAY_MACHINE_SPEAKERS` (heartbeat, cron, system, watchdog). Rowan's own
+    reply is `speaker='agent'`, so heartbeat→HEARTBEAT_OK cannot read as
+    conversation. Both flags remain, belt and braces.
+- **`DECAY_RECALL_COUNTS=false`** — the same bug one layer down. `recall_log`
+  records no trigger, so a cron's recall is indistinguishable from Jess's, and
+  MEASURED, Rowan's Aug 20 23:55 recall was the Daily Summary cron — which on
+  its own would have kept him decaying nightly. A recall also strengthens ~3
+  episodes against 4346 decaying. When Jess talks to him there is a human turn
+  anyway; this flag only governs the machine case.
+
+  **Upstream fix owed:** Rowan's client (`E:\git\LANGGRAPH`) should pass
+  `solitary=True` on heartbeat and cron retains — that is precisely what the
+  flag is for, and it would make the speaker-name list belt-and-braces rather
+  than load-bearing.
+
+  Jess's rule, quoted, is the spec for all of this: "decay should only happen
+  if I'm talking to him."
 - **`DECAY_FACTOR` 0.98 → 0.995** — half strength moves from 34 active nights
   to 138; the 0.1 conduction floor from 114 to 460.
 - **`DECAY_MIN_STRENGTH=0.15`** — passive decay floors instead of running to

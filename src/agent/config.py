@@ -112,6 +112,27 @@ DECAY_ACTIVITY_WINDOW_HOURS = int(os.environ.get("DECAY_ACTIVITY_WINDOW_HOURS", 
 # Jess's rule: decay when she is talking to him. Default false.
 DECAY_SOLITARY_COUNTS = os.environ.get(
     "DECAY_SOLITARY_COUNTS", "false").strip().lower() in ("1", "true", "yes", "on")
+# The `solitary` flag alone is NOT enough. MEASURED 2026-08-21: Rowan's live
+# heartbeat retains land as solitary=FALSE with speaker_name='heartbeat'
+# (only the BACKFILL ever set the flag), so a solitary-only test let the
+# hourly heartbeat keep marking him alive. Liveness therefore requires a
+# HUMAN TURN — a speaker='user' exchange whose name is not machinery. Rowan's
+# own reply is speaker='agent' and never counts on its own, which is what
+# stops 'heartbeat prompt -> HEARTBEAT_OK' from reading as a conversation.
+DECAY_MACHINE_SPEAKERS = [
+    s.strip().lower() for s in
+    os.environ.get("DECAY_MACHINE_SPEAKERS", "heartbeat,cron,system,watchdog").split(",")
+    if s.strip()]
+# Is a recall on its own enough to call the day lived? Default false, same
+# reasoning one layer down: recall_log records no trigger, so a cron's recall
+# is indistinguishable from Jess's. MEASURED 2026-08-21 — Rowan's only recalls
+# were Aug 20, and the 23:55 one was the Daily Summary cron, which alone would
+# have kept him decaying nightly. A recall also strengthens ~3 episodes
+# against 4346 decaying, so it is poor evidence of a day well lived. When Jess
+# talks to him there is a human turn anyway; this only governs the machine
+# case. Set true if a read-only integration ever needs to hold decay open.
+DECAY_RECALL_COUNTS = os.environ.get(
+    "DECAY_RECALL_COUNTS", "false").strip().lower() in ("1", "true", "yes", "on")
 
 # ── Backfill ───────────────────────────────────────────────────────────────────
 BACKFILL_EXCHANGES_PER_MIN = int(os.environ.get("BACKFILL_EXCHANGES_PER_MIN", "60"))

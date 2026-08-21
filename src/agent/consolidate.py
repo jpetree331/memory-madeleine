@@ -122,22 +122,41 @@ def _lived_scopes(cur, now: datetime) -> set[str]:
     * Backfill is not life. An exchange qualifies on the moment it *records*
       (occurred_at), not the moment it was imported, so ingesting years of
       transcripts never spends a night of decay.
-    * A solitary heartbeat is not life either, by default. Rowan posts ~30
-      solitary exchanges a day, every day, including days Jess never spoke to
-      him (Aug 12-15 and Aug 17: heartbeat only, zero conversation). Counting
-      those would decay every night and defeat this gate entirely. Worse, the
-      heartbeat only WRITES — the entire recall_log is 32 rows — so on
-      heartbeat-only days the decay side would run while the strengthening
-      side could not fire at all. Set DECAY_SOLITARY_COUNTS=true to treat an
-      agent's inner life as living.
+    * Machinery is not life. Rowan runs an hourly heartbeat and several crons.
+      They retain into Madeleine as a prompt turn plus his reply — literally
+      "You have FULL AUTONOMY during heartbeats" -> "HEARTBEAT_OK" — so on the
+      Aug 12-15 and Aug 17 pattern (automation only, zero conversation) they
+      would mark him alive every night and defeat this gate entirely. Worse,
+      the automation only WRITES — the whole recall_log is 32 rows — so those
+      nights would decay with the strengthening side unable to fire at all.
+
+      Liveness therefore needs a HUMAN TURN: speaker='user' whose name is not
+      in DECAY_MACHINE_SPEAKERS. Checking `solitary` alone was not enough and
+      is the trap here — only the BACKFILL ever set that flag; the live
+      heartbeat writes solitary=FALSE (MEASURED 2026-08-21). Rowan's own reply
+      is speaker='agent', so it never counts on its own.
+
+    * A recall is not life on its own, by default. recall_log records no
+      trigger, so a cron's recall is indistinguishable from Jess's — and
+      MEASURED, Rowan's 23:55 recall on Aug 20 was the Daily Summary cron,
+      which alone would have kept him decaying nightly. DECAY_RECALL_COUNTS
+      re-enables it for read-only integrations.
+
+    The proper upstream fix is for Rowan's client to pass solitary=True on
+    heartbeat and cron retains, which is exactly what that flag is for. Until
+    it does, the speaker-name guard is what holds.
     """
     cutoff = now - timedelta(hours=config.DECAY_ACTIVITY_WINDOW_HOURS)
     solitary_clause = "" if config.DECAY_SOLITARY_COUNTS else "AND NOT solitary "
-    cur.execute(
-        "SELECT scope FROM raw_exchanges "
-        f"WHERE COALESCE(occurred_at, created_at) >= %s {solitary_clause}"
-        "UNION SELECT scope FROM recall_log WHERE created_at >= %s",
-        (cutoff, cutoff))
+    sql = ("SELECT scope FROM raw_exchanges "
+           f"WHERE COALESCE(occurred_at, created_at) >= %s {solitary_clause}"
+           "AND speaker = 'user' "
+           "AND (speaker_name IS NULL OR lower(speaker_name) <> ALL(%s))")
+    params: list = [cutoff, config.DECAY_MACHINE_SPEAKERS]
+    if config.DECAY_RECALL_COUNTS:
+        sql += " UNION SELECT scope FROM recall_log WHERE created_at >= %s"
+        params.append(cutoff)
+    cur.execute(sql, params)
     return {r["scope"] for r in cur.fetchall()}
 
 

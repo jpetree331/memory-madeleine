@@ -39,11 +39,12 @@ def mkepisode(cur, scope, strength, *, pinned=False, recalled_at=None):
     return cur.fetchone()["id"]
 
 
-def mkexchange(cur, scope, occurred_at, solitary=False):
+def mkexchange(cur, scope, occurred_at, solitary=False,
+               speaker="user", speaker_name=None):
     cur.execute(
-        "INSERT INTO raw_exchanges (scope, speaker, content, occurred_at, solitary) "
-        "VALUES (%s, 'user', 'test', %s, %s) RETURNING id",
-        (scope, occurred_at, solitary))
+        "INSERT INTO raw_exchanges (scope, speaker, speaker_name, content, "
+        "occurred_at, solitary) VALUES (%s, %s, %s, 'test', %s, %s) RETURNING id",
+        (scope, speaker, speaker_name, occurred_at, solitary))
     return cur.fetchone()["id"]
 
 
@@ -61,8 +62,10 @@ def main():
 
     print(f"config: DECAY_FACTOR={f}  DECAY_MIN_STRENGTH={floor}  "
           f"DECAY_REQUIRE_ACTIVITY={config.DECAY_REQUIRE_ACTIVITY}  "
-          f"window={config.DECAY_ACTIVITY_WINDOW_HOURS}h  "
-          f"DECAY_SOLITARY_COUNTS={config.DECAY_SOLITARY_COUNTS}\n")
+          f"window={config.DECAY_ACTIVITY_WINDOW_HOURS}h\n"
+          f"        DECAY_SOLITARY_COUNTS={config.DECAY_SOLITARY_COUNTS}  "
+          f"DECAY_RECALL_COUNTS={config.DECAY_RECALL_COUNTS}\n"
+          f"        machine speakers={config.DECAY_MACHINE_SPEAKERS}\n")
 
     conn = db.get_connection()
     try:
@@ -90,10 +93,23 @@ def main():
         ep_recall = mkepisode(cur, "zz_recall", 0.9)
 
         # ── A scope with a HEARTBEAT today but no conversation ───────────────
-        # Rowan's real shape: ~30 solitary exchanges/day, every day. If these
-        # counted as living, the activity gate would never once exempt him.
-        mkexchange(cur, "zz_heartbeat", now - timedelta(hours=2), solitary=True)
+        # Rowan's REAL live shape, MEASURED 2026-08-21: solitary is FALSE (only
+        # the backfill ever set it), the prompt arrives as speaker='user' named
+        # 'heartbeat', and his reply is speaker='agent'. Neither is a human
+        # turn. A solitary-only test passed this and was wrong.
+        mkexchange(cur, "zz_heartbeat", None, speaker="user", speaker_name="heartbeat")
+        mkexchange(cur, "zz_heartbeat", None, speaker="agent", speaker_name="Rowan")
         ep_heartbeat = mkepisode(cur, "zz_heartbeat", 0.9)
+
+        # ── A scope running CRON jobs today but no conversation ──────────────
+        mkexchange(cur, "zz_cron", None, speaker="user", speaker_name="cron")
+        mkexchange(cur, "zz_cron", None, speaker="agent", speaker_name="Rowan")
+        ep_cron = mkepisode(cur, "zz_cron", 0.9)
+
+        # ── A scope where a HUMAN actually spoke, amid the machinery ─────────
+        mkexchange(cur, "zz_human", None, speaker="user", speaker_name="heartbeat")
+        mkexchange(cur, "zz_human", None, speaker="user", speaker_name="Jess")
+        ep_human = mkepisode(cur, "zz_human", 0.9)
 
         out = decay_pass(cur, now, week_ago)
 
@@ -113,18 +129,25 @@ def main():
               strength_of(cur, ep_idle), 0.9)
         check("backfill is not living - scope does not decay",
               strength_of(cur, ep_backfill), 0.9)
-        check("a recall counts as living",
-              strength_of(cur, ep_recall), 0.9 * f)
-        check("solitary heartbeat alone is not living",
-              strength_of(cur, ep_heartbeat),
-              0.9 * f if config.DECAY_SOLITARY_COUNTS else 0.9)
+        check("a recall alone follows DECAY_RECALL_COUNTS",
+              strength_of(cur, ep_recall),
+              0.9 * f if config.DECAY_RECALL_COUNTS else 0.9)
+        check("live heartbeat (solitary=FALSE) is not living",
+              strength_of(cur, ep_heartbeat), 0.9)
+        check("cron traffic is not living",
+              strength_of(cur, ep_cron), 0.9)
+        check("a human turn amid the machinery IS living",
+              strength_of(cur, ep_human), 0.9 * f)
         check("floor keeps everything above spread.py conduction (0.1)",
               strength_of(cur, ep_nearfloor) >= 0.1, True)
         check("idle scopes are reported",
               "zz_idle" in out["scopes_idle"] and "zz_backfill" in out["scopes_idle"],
               True)
         check("lived scopes are reported",
-              "zz_lived" in out["scopes_decayed"] and "zz_recall" in out["scopes_decayed"],
+              "zz_lived" in out["scopes_decayed"] and "zz_human" in out["scopes_decayed"],
+              True)
+        check("machine-only scopes are reported idle",
+              "zz_heartbeat" in out["scopes_idle"] and "zz_cron" in out["scopes_idle"],
               True)
         check("nothing compressed while floor >= 0.1", out["compressed"], 0)
         check("nothing tombstoned while floor >= 0.1", out["tombstoned"], 0)
@@ -141,7 +164,10 @@ def main():
                         (s, floor, week_ago))
             eligible = cur.fetchone()["n"]
             cur.execute("SELECT max(COALESCE(occurred_at, created_at)) AS t "
-                        "FROM raw_exchanges WHERE scope=%s AND NOT solitary", (s,))
+                        "FROM raw_exchanges WHERE scope=%s AND NOT solitary "
+                        "AND speaker='user' AND (speaker_name IS NULL OR "
+                        "lower(speaker_name) <> ALL(%s))",
+                        (s, config.DECAY_MACHINE_SPEAKERS))
             spoke = cur.fetchone()["t"]
             cur.execute("SELECT max(created_at) AS t FROM recall_log WHERE scope=%s", (s,))
             recalled = cur.fetchone()["t"]
