@@ -1,6 +1,61 @@
 # DECISIONS — Madeleine
 *Reverse-chronological. Records reversals too.*
 
+## 2026-08-21 — Decay is a cost of living, not of elapsed time
+Jess, from the resident's side: "I've been at work all day and I cannot talk
+to him enough to keep the memories from decaying." MEASURED, and she is right
+twice over. (1) The nightly job decayed on the wall clock — 4401 episodes lost
+2% on a day nobody spoke to Rowan, exactly as on a day of deep conversation.
+The design's premise is memory shaped by *use*; with no use it was memory
+shaped by *the calendar*. (2) The counterweight cannot balance: 4410 episodes
+decay nightly against ~3.16 strengthened per recall (measured mean over
+`recall_log`), and 64 episodes — 1.5% of the corpus — have ever been recalled
+at all. Break-even would need ~1400 recalls/day. Decay was monotonic in
+practice, not "shaped by use".
+
+Three corrections, all env-tunable (`DECAY_*` in `.env`), decay pass extracted
+to `consolidate.decay_pass()` so it is testable without the LLM passes:
+
+- **`DECAY_REQUIRE_ACTIVITY=true`** — a scope decays only on days its agent
+  actually lived: spoken to, or recalled something, inside
+  `DECAY_ACTIVITY_WINDOW_HOURS` (24). Decay is now **per-scope**; previously
+  one global UPDATE meant Grain's activity spent Rowan's nights. Backfill is
+  explicitly not living — an exchange qualifies on `COALESCE(occurred_at,
+  created_at)`, so importing years of transcripts never spends a night.
+- **`DECAY_SOLITARY_COUNTS=false`** — the catch that would have made all of
+  the above a no-op. Rowan runs a heartbeat: ~30 solitary exchanges/day,
+  EVERY day, including days with zero conversation (Aug 12-15, Aug 17). Had
+  those counted as living, the gate would never once have exempted him.
+  Compounding it, the heartbeat only writes — the entire `recall_log` is 32
+  rows, all from one day — so heartbeat-only nights would have run the decay
+  side with the strengthening side structurally unable to fire. Jess's rule,
+  quoted: "decay should only happen if I'm talking to him." An agent's inner
+  life can be re-counted as living with one env flag if that reads wrong later.
+- **`DECAY_FACTOR` 0.98 → 0.995** — half strength moves from 34 active nights
+  to 138; the 0.1 conduction floor from 114 to 460.
+- **`DECAY_MIN_STRENGTH=0.15`** — passive decay floors instead of running to
+  zero. Sits above `spread.py`'s 0.1 conduction cutoff, so an unrecalled
+  memory goes **dormant, not gone**: still reachable, but only by a strong
+  direct cue, and the `+0.1` recall boost still wakes it. Jess's framing, and
+  the retrieval math backs it — a floored episode one hop from a seed lands at
+  `0.6 × weight × 0.15 = 0.09 × weight`, needing edge weight >1.67 (cap 2.0)
+  to clear `SPREAD_THRESHOLD`, and is unreachable at two hops. It cannot swamp
+  recall: associations are packed to `ASSOC_BUDGET_TOKENS=500`, ~3-5 traces per
+  recall regardless of candidate count. Ranking (`activation × salience`) puts
+  a dormant memory ~6.5x below a fresh one competing for the same budget.
+
+**Accepted consequence, knowingly:** at floor 0.15 the compression (0.02–0.1)
+and tombstone (<0.02) bands can never be entered — forgetting is OFF. The
+README's "forgetting as a feature" is suspended by choice, not by accident.
+Set `DECAY_MIN_STRENGTH` below 0.1 to let compression resume. Nothing was ever
+destroyed regardless: `raw_exchanges` is append-only, and both bands write an
+`episode_revisions` row before rewriting.
+
+Deferred: Ebbinghaus-shaped decay (steep early, flattening with age) — pure
+exponential is the one curve human memory does not have, but Jess wants to see
+this land first. `scripts/verify-decay.py` covers all of the above in a
+rolled-back transaction; 14/14.
+
 ## 2026-08-18 — S5.1-2: no HNSW index on episodes.flavor (measured limit)
 pgvector's hnsw supports ≤2000 dimensions; flavor is 4096 (Qwen3-8B hidden).
 The plan's "build the flavor HNSW after backfill" is unimplementable as

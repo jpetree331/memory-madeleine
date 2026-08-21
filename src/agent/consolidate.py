@@ -35,7 +35,7 @@ from . import config, db, extractor
 
 logger = logging.getLogger("madeleine.consolidate")
 
-DECAY_FACTOR = 0.98
+DECAY_FACTOR = config.DECAY_FACTOR
 COMPRESS_BELOW = 0.1
 TOMBSTONE_BELOW = 0.02
 CO_RETRIEVAL_MIN = 3
@@ -110,6 +110,103 @@ def _revision(cur, episode_id: int, trace: str, strength: float, reason: str):
         "VALUES (%s, %s, %s, %s)", (episode_id, trace, strength, reason))
 
 
+def _lived_scopes(cur, now: datetime) -> set[str]:
+    """Scopes whose agent actually lived inside the activity window.
+
+    Decay is a cost of living, not of elapsed calendar time — a scope nobody
+    spoke to, and which recalled nothing, must not lose strength for the hours
+    its human spent at work.
+
+    Two exclusions, both MEASURED against Rowan's corpus 2026-08-21:
+
+    * Backfill is not life. An exchange qualifies on the moment it *records*
+      (occurred_at), not the moment it was imported, so ingesting years of
+      transcripts never spends a night of decay.
+    * A solitary heartbeat is not life either, by default. Rowan posts ~30
+      solitary exchanges a day, every day, including days Jess never spoke to
+      him (Aug 12-15 and Aug 17: heartbeat only, zero conversation). Counting
+      those would decay every night and defeat this gate entirely. Worse, the
+      heartbeat only WRITES — the entire recall_log is 32 rows — so on
+      heartbeat-only days the decay side would run while the strengthening
+      side could not fire at all. Set DECAY_SOLITARY_COUNTS=true to treat an
+      agent's inner life as living.
+    """
+    cutoff = now - timedelta(hours=config.DECAY_ACTIVITY_WINDOW_HOURS)
+    solitary_clause = "" if config.DECAY_SOLITARY_COUNTS else "AND NOT solitary "
+    cur.execute(
+        "SELECT scope FROM raw_exchanges "
+        f"WHERE COALESCE(occurred_at, created_at) >= %s {solitary_clause}"
+        "UNION SELECT scope FROM recall_log WHERE created_at >= %s",
+        (cutoff, cutoff))
+    return {r["scope"] for r in cur.fetchall()}
+
+
+def decay_pass(cur, now: datetime, week_ago: datetime) -> dict:
+    """Nightly forgetting, in isolation so it can be exercised without the
+    LLM passes around it.
+
+    Three rules, in order of how much they matter:
+      1. Only scopes that LIVED today decay (see _lived_scopes). Wall-clock
+         decay punished Jess for going to work.
+      2. Strength floors at DECAY_MIN_STRENGTH instead of running to zero.
+         Above spread.py's 0.1 conduction floor the memory is dormant, not
+         gone: a strong direct cue still reaches it, and the +0.1 recall
+         boost still wakes it.
+      3. Pinned, quarantined, and recently-recalled episodes are exempt.
+    """
+    out: dict = {"decayed": 0, "compressed": 0, "tombstoned": 0,
+                 "scopes_decayed": [], "scopes_idle": []}
+    floor = config.DECAY_MIN_STRENGTH
+    where = ["NOT pinned", "NOT quarantined", "strength > %s",
+             "(last_recalled_at IS NULL OR last_recalled_at < %s)"]
+    params: list = [DECAY_FACTOR, floor, floor, week_ago]
+
+    if config.DECAY_REQUIRE_ACTIVITY:
+        cur.execute("SELECT DISTINCT scope FROM episodes")
+        all_scopes = {r["scope"] for r in cur.fetchall()}
+        lived = _lived_scopes(cur, now) & all_scopes
+        out["scopes_decayed"] = sorted(lived)
+        out["scopes_idle"] = sorted(all_scopes - lived)
+        where.append("scope = ANY(%s)")
+        params.append(sorted(lived))
+    else:
+        out["scopes_decayed"] = ["*"]
+
+    if out["scopes_decayed"]:
+        cur.execute("UPDATE episodes SET strength = GREATEST(strength * %s, %s) "
+                    f"WHERE {' AND '.join(where)} RETURNING id", params)
+        out["decayed"] = len(cur.fetchall())
+
+    # Compression band. Unreachable while DECAY_MIN_STRENGTH >= COMPRESS_BELOW
+    # — that is the point of the floor, not an oversight. Lower the floor
+    # below 0.1 and this resumes.
+    cur.execute("SELECT id, trace, strength FROM episodes "
+                "WHERE NOT pinned AND NOT quarantined AND strength < %s "
+                "AND strength >= %s AND LENGTH(trace) > 80",
+                (COMPRESS_BELOW, TOMBSTONE_BELOW))
+    for row in cur.fetchall():
+        short = extractor._chat(COMPRESS_SYSTEM, row["trace"], max_tokens=60)
+        if not short:
+            continue
+        _revision(cur, row["id"], row["trace"], row["strength"], "decay_compress")
+        cur.execute("UPDATE episodes SET trace=%s WHERE id=%s",
+                    (_clean_llm_text(short), row["id"]))
+        out["compressed"] += 1
+
+    # Tombstone band — row kept, edges pruned, facts survive
+    cur.execute("SELECT id, trace, strength FROM episodes "
+                "WHERE NOT pinned AND NOT quarantined AND strength < %s "
+                "AND trace NOT LIKE '[faded]%%'", (TOMBSTONE_BELOW,))
+    for row in cur.fetchall():
+        _revision(cur, row["id"], row["trace"], row["strength"], "tombstone")
+        cur.execute("UPDATE episodes SET trace = '[faded] ' || LEFT(trace, 60) "
+                    "WHERE id=%s", (row["id"],))
+        cur.execute("DELETE FROM edges WHERE src_kind='episode' AND src_id=%s",
+                    (row["id"],))
+        out["tombstoned"] += 1
+    return out
+
+
 def run(now: datetime | None = None) -> dict:
     """One full consolidation pass. Returns the run summary (also written to
     data/logs/consolidate-<date>.log + .json for the Observatory)."""
@@ -147,44 +244,11 @@ def run(now: datetime | None = None) -> dict:
         summary["errors"].append(f"co_retrieval: {e}")
         logger.error("co_retrieval pass failed: %s", e)
 
-    # ── 2. Decay (pinned episodes are exempt — Observatory addendum) ─────────
+    # ── 2. Decay (pinned exempt; idle scopes exempt; floored into dormancy) ──
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE episodes SET strength = strength * %s "
-                    "WHERE NOT pinned AND NOT quarantined "
-                    "AND (last_recalled_at IS NULL OR last_recalled_at < %s) "
-                    "RETURNING id", (DECAY_FACTOR, week_ago))
-                summary["decayed"] = len(cur.fetchall())
-                # Compression band
-                cur.execute(
-                    "SELECT id, trace, strength FROM episodes "
-                    "WHERE NOT pinned AND NOT quarantined AND strength < %s "
-                    "AND strength >= %s AND LENGTH(trace) > 80",
-                    (COMPRESS_BELOW, TOMBSTONE_BELOW))
-                for row in cur.fetchall():
-                    short = extractor._chat(COMPRESS_SYSTEM, row["trace"], max_tokens=60)
-                    if not short:
-                        continue
-                    _revision(cur, row["id"], row["trace"], row["strength"],
-                              "decay_compress")
-                    cur.execute("UPDATE episodes SET trace=%s WHERE id=%s",
-                                (_clean_llm_text(short), row["id"]))
-                    summary["compressed"] += 1
-                # Tombstone band — row kept, edges pruned, facts survive
-                cur.execute(
-                    "SELECT id, trace, strength FROM episodes "
-                    "WHERE NOT pinned AND NOT quarantined AND strength < %s "
-                    "AND trace NOT LIKE '[faded]%%'", (TOMBSTONE_BELOW,))
-                for row in cur.fetchall():
-                    _revision(cur, row["id"], row["trace"], row["strength"], "tombstone")
-                    cur.execute(
-                        "UPDATE episodes SET trace = '[faded] ' || LEFT(trace, 60) "
-                        "WHERE id=%s", (row["id"],))
-                    cur.execute("DELETE FROM edges WHERE src_kind='episode' AND src_id=%s",
-                                (row["id"],))
-                    summary["tombstoned"] += 1
+                summary.update(decay_pass(cur, now, week_ago))
     except Exception as e:
         summary["errors"].append(f"decay: {e}")
         logger.error("decay pass failed: %s", e)

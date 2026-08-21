@@ -1,7 +1,9 @@
 """Sprint 4 VERIFY — run from repo root: .venv\\Scripts\\python.exe scripts\\verify-sprint4.py
 
 Checks (master plan + Observatory addendum):
-  1. Never-recalled episode decayed (×0.98); PINNED episode untouched.
+  1. Never-recalled episode decayed (×DECAY_FACTOR); PINNED episode untouched.
+     The scope counts as "lived" for the 2026-08-21 activity gate because of
+     the recall_log rows planted below — without them decay is exempt now.
   2. Recalled episode reconsolidated: trace changed, revision row exists
      (reason 'reconsolidation'), diff visible.
   3. Planted 3-episode pattern promoted to ONE derived fact with
@@ -19,7 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.agent import consolidate, db, embeddings  # noqa: E402
+from src.agent import config, consolidate, db, embeddings  # noqa: E402
 from src.agent.memory import _conn  # noqa: E402
 
 SCOPE = "verify-s4"
@@ -100,7 +102,7 @@ def main():
             cur.execute("SELECT id, trace, strength, pinned FROM episodes WHERE scope=%s",
                         (SCOPE,))
             eps = {r["id"]: r for r in cur.fetchall()}
-            decayed = abs(eps[ep_never]["strength"] - 0.98) < 0.001
+            decayed = abs(eps[ep_never]["strength"] - config.DECAY_FACTOR) < 0.001
             pin_held = abs(eps[ep_pinned]["strength"] - 1.0) < 0.001
             results.append(("1. decay applied; pinned exempt", decayed and pin_held,
                             f"never={eps[ep_never]['strength']:.3f} "

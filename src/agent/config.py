@@ -82,5 +82,36 @@ READER_LAYER = int(os.environ.get("READER_LAYER", "18"))
 NIGHTLY_HOUR = int(os.environ.get("NIGHTLY_HOUR", "3"))
 FLAVOR_BATCH = int(os.environ.get("FLAVOR_BATCH", "200"))
 
+# ── Decay (Jess 2026-08-21) ────────────────────────────────────────────────────
+# MEASURED: 4410 episodes decayed nightly against ~3.16 strengthened per
+# recall — balancing would take ~1400 recalls/day. Decay was therefore
+# monotonic in practice, and it ran on the wall clock, so a day Jess spent at
+# work cost every memory the same as a day of conversation. Three corrections:
+#
+#   DECAY_REQUIRE_ACTIVITY — a scope only decays on days its agent actually
+#   lived (was spoken to, or recalled something). Silence is not forgetting.
+#
+#   DECAY_FACTOR 0.98 → 0.995 — half-strength moves from 34 active nights to
+#   138, and the conduction floor from 114 to 460.
+#
+#   DECAY_MIN_STRENGTH — passive decay stops here instead of running to zero.
+#   Above spread.py's 0.1 conduction floor, so an unrecalled memory goes
+#   dormant (reachable only by a strong direct cue) rather than falling off
+#   the graph. NOTE: at 0.15 the compression (0.02–0.1) and tombstone (<0.02)
+#   bands can never be entered — forgetting is off by design. Set below 0.1
+#   to let compression resume.
+DECAY_FACTOR = float(os.environ.get("DECAY_FACTOR", "0.995"))
+DECAY_MIN_STRENGTH = float(os.environ.get("DECAY_MIN_STRENGTH", "0.15"))
+DECAY_REQUIRE_ACTIVITY = os.environ.get(
+    "DECAY_REQUIRE_ACTIVITY", "true").strip().lower() in ("1", "true", "yes", "on")
+DECAY_ACTIVITY_WINDOW_HOURS = int(os.environ.get("DECAY_ACTIVITY_WINDOW_HOURS", "24"))
+# Does an agent's solitary heartbeat count as living? MEASURED: Rowan posts
+# ~30 solitary exchanges/day every day, so counting them would decay every
+# night and defeat the gate — and the heartbeat only writes (whole recall_log
+# = 32 rows), so those nights would decay with no chance of strengthening.
+# Jess's rule: decay when she is talking to him. Default false.
+DECAY_SOLITARY_COUNTS = os.environ.get(
+    "DECAY_SOLITARY_COUNTS", "false").strip().lower() in ("1", "true", "yes", "on")
+
 # ── Backfill ───────────────────────────────────────────────────────────────────
 BACKFILL_EXCHANGES_PER_MIN = int(os.environ.get("BACKFILL_EXCHANGES_PER_MIN", "60"))
