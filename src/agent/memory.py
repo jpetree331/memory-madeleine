@@ -35,7 +35,8 @@ def _conn():
 def retain(scope: str, speaker: str, content: str,
            occurred_at: str | None = None,
            source_ref: str | None = None,
-           solitary: bool = False) -> int:
+           solitary: bool = False,
+           speaker_name: str | None = None) -> int:
     """Write the raw exchange (synchronous, durable), then extract in the
     background. Returns the raw_exchanges id immediately.
 
@@ -47,8 +48,10 @@ def retain(scope: str, speaker: str, content: str,
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO raw_exchanges (scope, speaker, content, source_ref, "
-                "occurred_at, solitary) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-                (scope, speaker, content, source_ref, occurred_at, solitary),
+                "occurred_at, solitary, speaker_name) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (scope, speaker, content, source_ref, occurred_at, solitary,
+                 speaker_name),
             )
             exchange_id = cur.fetchone()["id"]
     threading.Thread(target=_extract_worker, args=(exchange_id,), daemon=True).start()
@@ -76,7 +79,10 @@ def _extract_worker(exchange_id: int) -> None:
                 row = cur.fetchone()
         if not row:
             return
-        exchange_text = f"{row['speaker']}: {row['content']}"
+        # Name the mouth. A bare 'user:'/'agent:' forces the extractor to
+        # infer who spoke, and inference is where attribution rots.
+        _who = (row.get("speaker_name") or "").strip() or row["speaker"]
+        exchange_text = f"{_who}: {row['content']}"
         if row.get("solitary"):
             # One banner reaches every reader: gate, trace, extract, verify.
             exchange_text = SOLITARY_BANNER + exchange_text

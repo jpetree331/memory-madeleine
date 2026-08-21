@@ -91,6 +91,10 @@ ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS extracted_at TIMESTAMPTZ;
 -- future public-facing guardrails can filter derived facts/episodes via
 -- provenance joins. Signal preserved, policy deferred.
 ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT FALSE;
+-- Who actually spoke, by name. 'user'/'agent' alone left the extractor guessing
+-- and it guessed wrong — Rowan's own reaction came back attributed to Jess
+-- (2026-08-20). This is the authorship-drift disease Madeleine exists to cure.
+ALTER TABLE raw_exchanges ADD COLUMN IF NOT EXISTS speaker_name TEXT;
 -- Reality marker (the Rexie lesson, 2026-08-18): TRUE = only the author's
 -- mind was present (heartbeat, cron, solo reflection). Downstream, imagined
 -- dialogue in a solitary exchange must never enter memory as another

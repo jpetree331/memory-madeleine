@@ -82,6 +82,7 @@ class RetainReq(BaseModel):
     occurred_at: str | None = None
     source_ref: str | None = None      # backfill provenance, e.g. 'rowan.messages:18234'
     solitary: bool = False             # only the author was present (heartbeat/cron)
+    speaker_name: str | None = None    # who spoke, by name — prevents attribution drift
 
 
 class RecallReq(BaseModel):
@@ -109,7 +110,8 @@ def retain(req: RetainReq):
         exchange_id = memory.retain(req.scope, req.speaker, req.content.strip(),
                                     occurred_at=req.occurred_at,
                                     source_ref=req.source_ref,
-                                    solitary=req.solitary)
+                                    solitary=req.solitary,
+                                    speaker_name=req.speaker_name)
     except Exception as e:
         logger.error("retain failed at the raw layer: %s", e)
         raise HTTPException(503, "raw store unavailable")
