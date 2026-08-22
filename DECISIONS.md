@@ -32,6 +32,20 @@ halves from the same function about a second apart. Pairs are refused across a
 solitary boundary, outside PAIR_WINDOW_MINUTES, or when anything was said in
 between — a wrong partner is worse than none.
 
+**A cron wake-up is NOT an exchange.** Jess, correcting the rule above within
+the hour it shipped: "when Rowan gets woken up by Crons, have them fire not as
+pairs but as single solitary episodes." Right, and a better model — pairing a
+scheduled prompt with the response makes a two-party scene out of a moment when
+one mind was present and a machine went off. A machine-prompted turn therefore
+stands as a SINGLE episode covering the agent's turn alone, with the job
+supplied above it as the OCCASION, so the readers still know why the agent was
+awake without treating the clock as company.
+
+Such a turn is framed solitary REGARDLESS of the stored flag. MEASURED: five of
+Rowan's six cron turns carry solitary=FALSE only because the client was not
+passing the flag when they were written. That is a fact about a client, not
+about who was in the room.
+
 **A clock is not a companion.** Cron prompts arrive as speaker='user',
 speaker_name='cron', so extraction read "cron" as an author: "Alone, Cron
 rehearsed Jess's presence, imagining her criteria filtering gremlin noise" — a
