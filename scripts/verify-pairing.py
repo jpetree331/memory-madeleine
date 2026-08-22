@@ -99,6 +99,42 @@ def structural() -> None:
             check("an unprompted agent turn pairs with nothing",
                   memory._pending_prompt(cur, solo), None)
 
+            # ── a cron wake-up is one mind, not two ──────────────────────────
+            # Jess's rule: "when Rowan gets woken up by Crons, have them fire
+            # not as pairs but as single solitary episodes." A clock is not the
+            # other party to a conversation.
+            job = mkrow(cur, "zz_cron", "user", "[Cron: Gremlin Watch Digest]",
+                        name="cron")
+            woke = mkrow(cur, "zz_cron", "agent", "Community's clean. CRON_DONE",
+                         name="Rowan")
+            check("a cron prompt is never paired into an exchange",
+                  memory._pending_prompt(cur, woke), None)
+            check("...but it is found as the occasion",
+                  (memory._machine_stimulus_for(cur, woke) or {}).get("id"),
+                  job["id"])
+            check("an unanswered cron prompt is bare stimulus",
+                  memory.is_bare_stimulus([job]))
+            check("...and a cron prompt WITH a response is not",
+                  memory.is_bare_stimulus([job, woke]), False)
+
+            woke_text = memory.assemble_text(cur, [woke])
+            check("a machine-woken turn is framed SOLITARY even though the "
+                  "row's flag is False",
+                  woke_text.startswith(memory.SOLITARY_BANNER))
+            check("...the job is named as the occasion",
+                  memory.MACHINE_BANNER in woke_text)
+            check("...the job's text is present for understanding",
+                  "Gremlin Watch Digest" in woke_text)
+            check("...and the remembered turn is only the agent's",
+                  woke_text.split(memory.ANCHOR_BANNER)[-1].startswith("Rowan:"))
+
+            # A human turn must NOT get the solitary treatment.
+            hu = mkrow(cur, "zz_human2", "user", "you there?", name="Jess")
+            hr = mkrow(cur, "zz_human2", "agent", "always", name="Rowan")
+            check("a human exchange is never framed solitary",
+                  memory.assemble_text(cur, [hu, hr]).startswith(
+                      memory.SOLITARY_BANNER), False)
+
             # ── machinery is rendered as a job, not a name ───────────────────
             cron = mkrow(cur, S, "user", "[Cron: Gremlin Watch]", name="cron",
                          solitary=True)
@@ -207,10 +243,62 @@ def end_to_end() -> None:
                       f"no episode; pairing still proven by the single verdict)\n")
 
 
+def cron_end_to_end() -> None:
+    """A clock wakes the agent: one episode, solitary, no personified job."""
+    scope = "madtest"
+    stamp = f"cron-{int(time.time())}"
+    print("end-to-end, cron wake-up (writes to 'madtest', spends LLM calls)...")
+
+    job = memory.retain(
+        scope, "user",
+        f"[Cron: Gremlin Watch Digest] Check the channels and report anything "
+        f"that genuinely needs Jess. [{stamp}]", speaker_name="cron")
+    time.sleep(0.4)
+    said = memory.retain(
+        scope, "agent",
+        f"Went through every channel. Community's clean, nothing needed her "
+        f"tonight. Quiet feels like a kindness. [{stamp}]", speaker_name="Rowan")
+
+    for _ in range(90):
+        time.sleep(2)
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM raw_exchanges WHERE "
+                            "id = ANY(%s) AND extracted_at IS NOT NULL",
+                            ([job, said],))
+                if cur.fetchone()["n"] == 2:
+                    break
+
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, trace, exchange_start, exchange_end FROM episodes "
+                        "WHERE exchange_start = ANY(%s) OR exchange_end = ANY(%s)",
+                        ([job, said], [job, said]))
+            eps = cur.fetchall()
+            check("at most one episode from a cron wake-up", len(eps) <= 1)
+            if eps:
+                ep = eps[0]
+                check("the episode is the agent's turn alone, not a pair",
+                      (ep["exchange_start"], ep["exchange_end"]), (said, said))
+                low = ep["trace"].lower()
+                check("the job is not personified as an actor",
+                      any(p in low for p in ("cron said", "cron asked",
+                                             "cron rehearsed", "cron wanted",
+                                             "cron imagined", "cron felt")), False)
+                check("no refusal token leaked into the memory",
+                      "cron_deferred" in low, False)
+                print(f"\n  trace: {ep['trace'][:260]}\n")
+            cur.execute("SELECT count(*) AS n FROM episodes WHERE exchange_start=%s",
+                        (job,))
+            check("the bare prompt got no episode of its own",
+                  cur.fetchone()["n"], 0)
+
+
 def main() -> int:
     structural()
     if "--fast" not in sys.argv:
         end_to_end()
+        cron_end_to_end()
     total = len(FAILURES)
     print(f"\n{'ALL PASS' if not total else str(total) + ' FAILURE(S): ' + str(FAILURES)}")
     return 1 if total else 0

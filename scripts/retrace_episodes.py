@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.agent import db, episodes, memory  # noqa: E402
+from src.agent import config, db, episodes, memory  # noqa: E402
 from src.agent.consolidate import _revision  # noqa: E402
 
 
@@ -54,19 +54,20 @@ def load_rows(cur, ep: dict, as_pairs: bool = True) -> list[dict]:
 
     only = rows[0]
     if only["speaker"] == "agent":
-        prompt = memory._pending_prompt(cur, only)
-        if prompt is None:
-            # _pending_prompt only offers rows still awaiting extraction; a
-            # historical prompt was extracted long ago, so check directly.
-            cur.execute("SELECT * FROM raw_exchanges WHERE scope=%s AND id < %s "
-                        "ORDER BY id DESC LIMIT 1", (only["scope"], only["id"]))
-            prev = cur.fetchone()
-            if (prev and prev["speaker"] == "user"
-                    and bool(prev["solitary"]) == bool(only["solitary"])):
-                prompt = dict(prev)
-        if prompt is not None:
-            return [dict(prompt), only]
+        # A machine-prompted turn is deliberately NOT rejoined: it stays a
+        # single solitary episode, and assemble_text supplies the job as the
+        # occasion. Rejoining would rebuild the two-party scene we are undoing.
+        if memory._machine_stimulus_for(cur, only) is not None:
+            return rows
+        cur.execute("SELECT * FROM raw_exchanges WHERE scope=%s AND id < %s "
+                    "ORDER BY id DESC LIMIT 1", (only["scope"], only["id"]))
+        prev = cur.fetchone()
+        if (prev and prev["speaker"] == "user"
+                and bool(prev["solitary"]) == bool(only["solitary"])):
+            return [dict(prev), only]
     else:
+        if config.is_machine_speaker(only["speaker_name"]):
+            return rows          # bare stimulus; caller reports and skips
         cur.execute("SELECT * FROM raw_exchanges WHERE scope=%s AND id > %s "
                     "ORDER BY id LIMIT 1", (only["scope"], only["id"]))
         nxt = cur.fetchone()

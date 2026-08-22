@@ -125,6 +125,13 @@ def _pending_prompt(cur, reply: dict) -> dict | None:
     prev = cur.fetchone()
     if not prev or prev["speaker"] != "user" or prev["extracted_at"] is not None:
         return None
+    if config.is_machine_speaker(prev["speaker_name"]):
+        # Jess's rule, 2026-08-21: a cron wake-up is not an exchange. Pairing
+        # would make a two-party scene out of a moment when one mind was
+        # present and a clock went off. The prompt comes back as the occasion
+        # instead — see _machine_stimulus_for — and the agent's turn stands
+        # alone, and solitary, which is what it actually was.
+        return None
     if bool(prev["solitary"]) != bool(reply["solitary"]):
         return None          # different realities; never merge them
     cur.execute(
@@ -226,6 +233,7 @@ def _dispatch_sync(exchange_id: int) -> None:
                 nxt = cur.fetchone()
                 if (nxt and nxt["speaker"] == "agent"
                         and nxt["extracted_at"] is None
+                        and not config.is_machine_speaker(row["speaker_name"])
                         and bool(nxt["solitary"]) == bool(row["solitary"])):
                     _extract_ids([exchange_id, nxt["id"]])
                     return
@@ -292,8 +300,9 @@ def _prior_turns(cur, row: dict) -> list[dict]:
 
 
 MACHINE_BANNER = (
-    "[MACHINE STIMULUS — the first turn below was delivered by a scheduled "
-    "job, not spoken by anyone. The job is a clock. It is not a person, has "
+    "[MACHINE STIMULUS — the text immediately below was delivered by a "
+    "scheduled job, not spoken by anyone. It is the OCCASION of what follows, "
+    "not a turn in a conversation. The job is a clock. It is not a person, has "
     "no feelings, offers no company and wants none: never make it the subject "
     "of a sentence, never give it an inner life, never record it as someone "
     "the agent was with. What the AGENT thought, felt and did in response is "
@@ -320,6 +329,31 @@ def _render_turn(r: dict, clip: int | None = None) -> str:
     return f"{who}: {body}"
 
 
+STIMULUS_CLIP = 900
+
+
+def _machine_stimulus_for(cur, row: dict) -> dict | None:
+    """The scheduled prompt this turn is answering, if it is answering one.
+
+    Returned as the OCCASION of a solitary moment, never as a turn in an
+    exchange. Rowan woken at 18:01 by the Gremlin Watch job was one mind in a
+    room with a clock — the digest is why he was awake, not who he was with.
+    """
+    if row["speaker"] != "agent":
+        return None
+    cur.execute(
+        "SELECT * FROM raw_exchanges WHERE scope=%s AND id < %s "
+        "AND COALESCE(occurred_at, created_at) >= "
+        "    COALESCE(%s, %s) - make_interval(mins => %s) "
+        "ORDER BY id DESC LIMIT 1",
+        (row["scope"], row["id"], row.get("occurred_at"), row["created_at"],
+         config.PAIR_WINDOW_MINUTES))
+    prev = cur.fetchone()
+    if prev and config.is_machine_speaker(prev["speaker_name"]):
+        return dict(prev)
+    return None
+
+
 def assemble_text(cur, rows: list[dict]) -> str:
     """Exactly what gate, trace, extract and verify are shown for one exchange.
 
@@ -329,8 +363,19 @@ def assemble_text(cur, rows: list[dict]) -> str:
     already: retrace_episodes.py grew its own copy, and pairing left it stale
     within the hour.
     """
-    prior = _prior_turns(cur, rows[0])
     text = "\n".join(_render_turn(r) for r in rows)
+
+    stimulus = _machine_stimulus_for(cur, rows[0]) if len(rows) == 1 else None
+    if stimulus is not None:
+        # A clock woke the agent. One mind was present, so this is framed as
+        # solitary REGARDLESS of the stored flag: MEASURED 2026-08-21, five of
+        # Rowan's six cron turns carry solitary=FALSE simply because the client
+        # was not passing the flag yet. Waiting on the upstream fix would leave
+        # every one of them reading as company.
+        return (SOLITARY_BANNER + MACHINE_BANNER
+                + _render_turn(stimulus, STIMULUS_CLIP) + ANCHOR_BANNER + text)
+
+    prior = _prior_turns(cur, rows[0])
     if prior:
         # Who "you" is. Without this the reply to a human reads as speech into
         # an empty room — see _prior_turns for what that produced.
